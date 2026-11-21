@@ -1,0 +1,772 @@
+#pragma once
+/**
+ * Portable C++17 protocol codecs, safety aggregator, and Pylontech LV RS485 emulator.
+ * Facts verified from:
+ *  - Shoto BMS Modbus Communication Protocol V1.2_EN-20190110.pdf (Product: SDA10-48100)
+ *  - TianBangda LFP MS-ShotoV1.1.634-26.exe (REA managed analysis ev_f1b14058...)
+ *  - BMS Communication Protocol_V2_8_180807.doc (YD/T 1363.3 ASCII)
+ *  - hpeyerl/esphome-shoto-smartli (SmartLi DC/DC candidate)
+ *  - Fahmula/esphome-pylontech-rs485 (CID2 0x61/0x62/0x63) + Pylontech V3.3 (0x42/0x44/0x47/0x4F/0x51)
+ */
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include "safety_core.hpp"
+
+enum ShotoProtoKind : uint8_t {
+    PROTO_AUTO = 0,
+    PROTO_MODBUS_V12 = 1,
+    PROTO_TBD_BINARY = 2,
+    PROTO_TBD_1363 = 3,
+    PROTO_SMARTLI_DCDC = 4,
+};
+
+struct PolicyLimits {
+    float cvl_v = 54.4f;
+    float dvl_v = 46.0f;
+    float ccl_a = 50.0f;
+    float dcl_a = 80.0f;
+    float default_capacity_ah = 100.0f;
+};
+
+struct TelemetryExt {
+    uint8_t cell_count = 0;
+    uint16_t cell_mv[16] = {0};
+    uint16_t min_cell_mv = 0;
+    uint16_t max_cell_mv = 0;
+    uint8_t temp_count = 0;
+    float temps_c[5] = {0};
+    float min_temp_c = 25.0f;
+    float max_temp_c = 25.0f;
+    float avg_temp_c = 25.0f;
+    float soh = 100.0f;
+    float rem_cap_ah = 0.0f;
+    uint16_t cycles = 0;
+    uint16_t warn_flags = 0;
+    uint16_t prot_flags = 0;
+    uint8_t fault_flags = 0;
+    uint8_t status_flags = 0;
+    uint8_t online_count = 1;
+};
+
+struct PackState {
+    Pack core;
+    TelemetryExt ext;
+    ShotoProtoKind detected_proto = PROTO_AUTO;
+    uint8_t addr = 0;
+};
+
+struct BankExt {
+    Bank core;
+    bool has_telemetry = false;
+    uint8_t pack_count = 0;
+    float bus_v = 0.0f;
+    float rem_cap_ah = 0.0f;
+    float soh = 0.0f;
+    float min_temp_c = 25.0f;
+    float max_temp_c = 25.0f;
+    float avg_temp_c = 25.0f;
+    uint16_t min_cell_mv = 0;
+    uint16_t max_cell_mv = 0;
+    uint16_t cycles = 0;
+    uint16_t warn_flags = 0;
+    uint16_t prot_flags = 0;
+    uint8_t fault_flags = 0;
+    uint8_t cell_count = 0;
+    uint16_t cell_mv[16] = {0};
+};
+
+// -------------------- Checksums --------------------
+
+inline uint16_t modbus_crc16(const uint8_t* data, size_t len) {
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i < len; ++i) {
+        crc ^= data[i];
+        for (int b = 0; b < 8; ++b) {
+            crc = (crc & 1) ? static_cast<uint16_t>((crc >> 1) ^ 0xA001)
+                            : static_cast<uint16_t>(crc >> 1);
+        }
+    }
+    return crc;
+}
+
+inline uint8_t tbd_checksum(const uint8_t* data, size_t len) {
+    uint8_t x = 0;
+    uint32_t s = 0;
+    for (size_t i = 0; i < len; ++i) {
+        x ^= data[i];
+        s += data[i];
+    }
+    return static_cast<uint8_t>((x ^ s) & 0xFFu);
+}
+
+inline uint16_t ydt_chksum(const char* body, size_t len) {
+    uint32_t s = 0;
+    for (size_t i = 0; i < len; ++i) {
+        s += static_cast<uint8_t>(body[i]);
+    }
+    return static_cast<uint16_t>((~s + 1u) & 0xFFFFu);
+}
+
+inline uint16_t ydt_length_field(uint16_t lenid_ascii) {
+    uint16_t n = lenid_ascii & 0x0FFFu;
+    uint16_t sum = ((n >> 8) & 0xFu) + ((n >> 4) & 0xFu) + (n & 0xFu);
+    uint16_t lchk = ((~sum) + 1u) & 0xFu;
+    return static_cast<uint16_t>((lchk << 12) | n);
+}
+
+inline int hex_val(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return -1;
+}
+
+inline bool hex_to_bytes(const char* hex, size_t hex_len, uint8_t* out, size_t out_cap) {
+    if ((hex_len % 2) != 0 || (hex_len / 2) > out_cap) return false;
+    for (size_t i = 0; i < hex_len; i += 2) {
+        int hi = hex_val(hex[i]);
+        int lo = hex_val(hex[i + 1]);
+        if (hi < 0 || lo < 0) return false;
+        out[i / 2] = static_cast<uint8_t>((hi << 4) | lo);
+    }
+    return true;
+}
+
+inline uint16_t be_u16(const uint8_t* p) {
+    return static_cast<uint16_t>((static_cast<uint16_t>(p[0]) << 8) | p[1]);
+}
+
+inline int16_t be_s16(const uint8_t* p) {
+    return static_cast<int16_t>(be_u16(p));
+}
+
+// -------------------- 1. Shoto BMS Modbus V1.2 (PDF) --------------------
+
+inline void build_shoto_modbus_v12_req(uint8_t addr, uint8_t out[8]) {
+    out[0] = addr;
+    out[1] = 0x04;
+    out[2] = 0x0F;
+    out[3] = 0xFF;
+    out[4] = 0x00;
+    out[5] = 0x27;
+    uint16_t crc = modbus_crc16(out, 6);
+    out[6] = static_cast<uint8_t>(crc & 0xFF);
+    out[7] = static_cast<uint8_t>((crc >> 8) & 0xFF);
+}
+
+inline bool parse_shoto_modbus_v12_resp(
+    const uint8_t* rx, size_t len, uint8_t expected_addr,
+    uint32_t now_ms, const PolicyLimits& lim, PackState& out)
+{
+    if (len < 83 || rx[0] != expected_addr || rx[1] != 0x04 || rx[2] < 78) return false;
+    size_t frame_len = static_cast<size_t>(rx[2]) + 5u;
+    if (len < frame_len) return false;
+    uint16_t rx_crc = static_cast<uint16_t>(rx[frame_len - 2] | (rx[frame_len - 1] << 8));
+    if (modbus_crc16(rx, frame_len - 2) != rx_crc) return false;
+
+    auto reg = [&](size_t idx) -> uint16_t {
+        return be_u16(rx + 3 + 2 * idx);
+    };
+
+    PackState st{};
+    st.detected_proto = PROTO_MODBUS_V12;
+    st.addr = expected_addr;
+    st.core.sampled_ms = now_ms;
+    st.core.bus_v = reg(0) * 0.01f;
+    // PDF Note 3: charge is negative, discharge is positive -> negate to canonical (+ charge, - discharge)
+    st.core.bus_a = (10000.0f - static_cast<float>(reg(1))) * 0.1f;
+    st.ext.rem_cap_ah = reg(2) * 0.1f;
+    float avg_t = (static_cast<float>(reg(3)) - 400.0f) * 0.1f;
+    st.ext.warn_flags = reg(5);
+    st.ext.prot_flags = reg(6);
+    uint16_t r1006 = reg(7);
+    // Verified from PDF p.10 golden capture 0x0800 (Status=0x08 DisgMOSConnect, Fault=0x00)
+    st.ext.fault_flags = static_cast<uint8_t>(r1006 & 0xFFu);
+    st.ext.status_flags = static_cast<uint8_t>((r1006 >> 8) & 0xFFu);
+    st.core.soc = reg(8) * 0.01f;
+    st.ext.soh = reg(9) * 0.01f;
+    st.core.capacity_ah = reg(10) * 0.1f;
+    st.ext.cycles = reg(11);
+
+    uint16_t cnum = std::min<uint16_t>(reg(12), 16u);
+    st.ext.cell_count = static_cast<uint8_t>(cnum);
+    uint16_t cmin = 65535u, cmax = 0u;
+    for (uint16_t i = 0; i < cnum; ++i) {
+        uint16_t mv = reg(13 + i);
+        if (mv != 0xFFFFu) {
+            st.ext.cell_mv[i] = mv;
+            cmin = std::min(cmin, mv);
+            cmax = std::max(cmax, mv);
+        }
+    }
+    st.ext.min_cell_mv = (cmin == 65535u) ? 0 : cmin;
+    st.ext.max_cell_mv = cmax;
+
+    uint16_t tnum = std::min<uint16_t>(reg(29), 4u);
+    st.ext.temp_count = static_cast<uint8_t>(tnum);
+    float tmin = 999.0f, tmax = -999.0f, tsum = 0.0f;
+    for (uint16_t k = 0; k < tnum; ++k) {
+        float tc = (static_cast<float>(reg(30 + k)) - 400.0f) * 0.1f;
+        st.ext.temps_c[k] = tc;
+        tmin = std::min(tmin, tc);
+        tmax = std::max(tmax, tc);
+        tsum += tc;
+    }
+    st.ext.min_temp_c = (tnum > 0) ? tmin : avg_t;
+    st.ext.max_temp_c = (tnum > 0) ? tmax : avg_t;
+    st.ext.avg_temp_c = (tnum > 0) ? (tsum / tnum) : avg_t;
+
+    float bms_max_chg_cur = static_cast<float>(reg(34));
+    float bms_boost_v = reg(38) * 0.01f;
+    st.core.ccl = std::min(bms_max_chg_cur, lim.ccl_a);
+    st.core.dcl = lim.dcl_a;
+    st.core.cvl = (bms_boost_v > lim.dvl_v) ? std::min(bms_boost_v, lim.cvl_v) : lim.cvl_v;
+    st.core.dvl = lim.dvl_v;
+
+    st.core.critical = (st.ext.prot_flags != 0) || (st.ext.fault_flags != 0);
+    st.core.allow_charge = !st.core.critical && ((st.ext.status_flags & 0x04u) != 0);
+    st.core.allow_discharge = !st.core.critical && ((st.ext.status_flags & 0x08u) != 0);
+    st.core.identity_verified = true;
+    st.core.limits_verified = true;
+    st.core.complete = (st.core.bus_v > 0.0f && st.core.capacity_ah > 0.0f);
+
+    out = st;
+    return true;
+}
+
+// -------------------- 2. TianBangda Binary (TBD, EXE CIL) --------------------
+
+inline void build_tbd_binary_req(uint8_t addr, uint8_t hdr, uint8_t cmd, uint8_t out[6]) {
+    out[0] = hdr;
+    out[1] = addr;
+    out[2] = cmd;
+    out[3] = 0x00;
+    out[4] = tbd_checksum(out, 4);
+    out[5] = 0x0D;
+}
+
+inline bool parse_tbd_binary_resp(
+    const uint8_t* rx, size_t len, uint8_t expected_addr,
+    uint32_t now_ms, const PolicyLimits& lim, PackState& out)
+{
+    if (len < 48 || rx[len - 1] != 0x0D) return false;
+    if (rx[1] != expected_addr) return false;
+    if (rx[len - 2] != tbd_checksum(rx, len - 2)) return false;
+
+    uint8_t n_cells = rx[5];
+    if ((n_cells != 15 && n_cells != 16) || len < static_cast<size_t>(56 + 2 * n_cells)) {
+        return false;
+    }
+
+    size_t c = 2u * n_cells;
+    PackState st{};
+    st.detected_proto = PROTO_TBD_BINARY;
+    st.addr = expected_addr;
+    st.core.sampled_ms = now_ms;
+    st.ext.cell_count = n_cells;
+
+    uint16_t cmin = 65535u, cmax = 0u;
+    for (uint8_t i = 0; i < n_cells; ++i) {
+        uint16_t mv = static_cast<uint16_t>(((rx[6 + 2 * i] & 0x1Fu) << 8) | rx[7 + 2 * i]);
+        st.ext.cell_mv[i] = mv;
+        cmin = std::min(cmin, mv);
+        cmax = std::max(cmax, mv);
+    }
+    st.ext.min_cell_mv = cmin;
+    st.ext.max_cell_mv = cmax;
+
+    uint16_t raw_i = be_u16(rx + 8 + c);
+    st.core.bus_a = (30000.0f - static_cast<float>(raw_i)) * 0.01f;
+    st.core.soc = static_cast<float>(be_u16(rx + 12 + c)) * 0.01f;
+    st.core.capacity_ah = static_cast<float>(be_u16(rx + 16 + c)) * 0.01f;
+    st.ext.rem_cap_ah = st.core.capacity_ah * (st.core.soc * 0.01f);
+
+    uint8_t tnum = 5;
+    st.ext.temp_count = tnum;
+    float tmin = 999.0f, tmax = -999.0f, tsum = 0.0f;
+    for (uint8_t k = 0; k < tnum; ++k) {
+        float tc = static_cast<float>(rx[21 + c + 2 * k]) - 50.0f;
+        st.ext.temps_c[k] = tc;
+        tmin = std::min(tmin, tc);
+        tmax = std::max(tmax, tc);
+        tsum += tc;
+    }
+    st.ext.min_temp_c = tmin;
+    st.ext.max_temp_c = tmax;
+    st.ext.avg_temp_c = tsum / tnum;
+
+    size_t b = 2u * n_cells + 2u * tnum;
+    if (len < 46 + b) return false;
+    // Capture protection & status bytes from flogbuff (rx[22+b .. 33+b])
+    st.ext.prot_flags = static_cast<uint16_t>(rx[22 + b] | (rx[23 + b] << 8));
+    st.ext.warn_flags = static_cast<uint16_t>(rx[30 + b] | (rx[31 + b] << 8));
+    uint8_t fet_status = rx[29 + b];
+    st.ext.status_flags = fet_status;
+
+    st.ext.cycles = be_u16(rx + 34 + b);
+    st.core.bus_v = static_cast<float>(be_u16(rx + 38 + b)) * 0.01f;
+    st.ext.soh = static_cast<float>(be_u16(rx + 42 + b)) * 0.01f;
+
+    st.core.ccl = lim.ccl_a;
+    st.core.dcl = lim.dcl_a;
+    st.core.cvl = lim.cvl_v;
+    st.core.dvl = lim.dvl_v;
+
+    // Bit 3 of rx[22+b]..rx[23+b] are prot flags; check critical conservatively
+    st.core.critical = (rx[22 + b] & 0xF8u) != 0 || (rx[23 + b] & 0x1Fu) != 0;
+    st.core.allow_charge = !st.core.critical;
+    st.core.allow_discharge = !st.core.critical;
+    st.core.identity_verified = true;
+    st.core.limits_verified = true;
+    st.core.complete = (st.core.bus_v > 0.0f && st.core.capacity_ah > 0.0f);
+
+    out = st;
+    return true;
+}
+
+// -------------------- 3. TianBangda YD/T 1363.3 ASCII (DOC V2.8) --------------------
+
+inline size_t build_ydt1363_frame(
+    const char* ver, const char* adr, const char* cid1,
+    const char* cid2_or_rtn, const char* info_hex, char* out, size_t out_cap)
+{
+    size_t info_len = info_hex ? std::strlen(info_hex) : 0u;
+    uint16_t len_field = ydt_length_field(static_cast<uint16_t>(info_len));
+    char body[512];
+    int n = std::snprintf(body, sizeof(body), "%s%s%s%s%04X%s",
+                          ver, adr, cid1, cid2_or_rtn, len_field, info_hex ? info_hex : "");
+    if (n < 12 || static_cast<size_t>(n) >= sizeof(body)) return 0;
+    uint16_t chk = ydt_chksum(body, static_cast<size_t>(n));
+    int total = std::snprintf(out, out_cap, "~%s%04X\r", body, chk);
+    if (total < 0 || static_cast<size_t>(total) >= out_cap) return 0;
+    return static_cast<size_t>(total);
+}
+
+inline size_t build_tbd_1363_req(uint8_t pack_group, uint8_t cid2, char* out, size_t out_cap) {
+    char cid2_s[4], info_s[4];
+    std::snprintf(cid2_s, sizeof(cid2_s), "%02X", cid2);
+    if (cid2 == 0x42 || cid2 == 0x44) {
+        std::snprintf(info_s, sizeof(info_s), "%02X", pack_group);
+    } else {
+        info_s[0] = '\0';
+    }
+    return build_ydt1363_frame("26", "00", "46", cid2_s, info_s, out, out_cap);
+}
+
+inline bool validate_ydt1363_frame(
+    const char* frame, size_t len,
+    char ver_out[3], char adr_out[3], char cid1_out[3], char cid2_out[3],
+    const char*& info_ptr, size_t& info_len)
+{
+    if (len < 18 || frame[0] != '~' || frame[len - 1] != '\r') return false;
+    size_t body_len = len - 6; // exclude '~', 4 hex chksum, '\r'
+    if (body_len < 12 || (body_len % 2) != 0) return false;
+    const char* body = frame + 1;
+    const char* chk_str = frame + 1 + body_len;
+
+    for (size_t i = 0; i < body_len + 4; ++i) {
+        if (hex_val(body[i]) < 0) return false;
+    }
+    uint8_t chk_bytes[2];
+    if (!hex_to_bytes(chk_str, 4, chk_bytes, 2)) return false;
+    uint16_t rx_chk = be_u16(chk_bytes);
+    if (ydt_chksum(body, body_len) != rx_chk) return false;
+
+    uint8_t len_bytes[2];
+    if (!hex_to_bytes(body + 8, 4, len_bytes, 2)) return false;
+    uint16_t len_field = be_u16(len_bytes);
+    uint16_t lenid = len_field & 0x0FFFu;
+    if (lenid != body_len - 12 || len_field != ydt_length_field(lenid)) return false;
+
+    std::memcpy(ver_out, body + 0, 2); ver_out[2] = '\0';
+    std::memcpy(adr_out, body + 2, 2); adr_out[2] = '\0';
+    std::memcpy(cid1_out, body + 4, 2); cid1_out[2] = '\0';
+    std::memcpy(cid2_out, body + 6, 2); cid2_out[2] = '\0';
+    info_ptr = body + 12;
+    info_len = lenid;
+    return true;
+}
+
+inline bool parse_tbd_1363_42_resp(
+    const char* frame, size_t len, uint8_t expected_group,
+    uint32_t now_ms, const PolicyLimits& lim, PackState& out)
+{
+    char ver[3], adr[3], cid1[3], rtn[3];
+    const char* info = nullptr;
+    size_t info_len = 0;
+    if (!validate_ydt1363_frame(frame, len, ver, adr, cid1, rtn, info, info_len)) return false;
+    if (std::strcmp(rtn, "00") != 0 || info_len < 32) return false;
+
+    uint8_t raw[256];
+    if (!hex_to_bytes(info, info_len, raw, sizeof(raw))) return false;
+    size_t rlen = info_len / 2;
+    uint8_t m = raw[2];
+    if (m == 0 || m > 16 || 3 + 2 * m + 1 > rlen) return false;
+
+    PackState st{};
+    st.detected_proto = PROTO_TBD_1363;
+    st.addr = expected_group;
+    st.core.sampled_ms = now_ms;
+    st.ext.cell_count = m;
+
+    size_t idx = 3;
+    uint16_t cmin = 65535u, cmax = 0u;
+    for (uint8_t i = 0; i < m; ++i) {
+        uint16_t mv = be_u16(raw + idx);
+        st.ext.cell_mv[i] = mv;
+        cmin = std::min(cmin, mv);
+        cmax = std::max(cmax, mv);
+        idx += 2;
+    }
+    st.ext.min_cell_mv = cmin;
+    st.ext.max_cell_mv = cmax;
+
+    uint8_t n = raw[idx++];
+    if (idx + 2 * n + 11 > rlen) return false;
+    st.ext.temp_count = std::min<uint8_t>(n, 5);
+    float tmin = 999.0f, tmax = -999.0f, tsum = 0.0f;
+    for (uint8_t k = 0; k < n; ++k) {
+        float tc = (static_cast<float>(be_u16(raw + idx)) - 2731.0f) * 0.1f;
+        if (k < 5) st.ext.temps_c[k] = tc;
+        tmin = std::min(tmin, tc);
+        tmax = std::max(tmax, tc);
+        tsum += tc;
+        idx += 2;
+    }
+    st.ext.min_temp_c = (n > 0) ? tmin : 25.0f;
+    st.ext.max_temp_c = (n > 0) ? tmax : 25.0f;
+    st.ext.avg_temp_c = (n > 0) ? (tsum / n) : 25.0f;
+
+    st.core.bus_a = static_cast<float>(be_s16(raw + idx)) * 0.01f; idx += 2;
+    st.core.bus_v = static_cast<float>(be_u16(raw + idx)) * 0.01f; idx += 2;
+    st.ext.rem_cap_ah = static_cast<float>(be_u16(raw + idx)) * 0.01f; idx += 2;
+    idx += 1; // self-define count
+    st.core.capacity_ah = static_cast<float>(be_u16(raw + idx)) * 0.01f; idx += 2;
+    st.ext.cycles = be_u16(raw + idx);
+    st.core.soc = (st.core.capacity_ah > 0.0f)
+        ? std::min(100.0f, 100.0f * st.ext.rem_cap_ah / st.core.capacity_ah)
+        : 0.0f;
+    st.ext.soh = 100.0f;
+
+    st.core.ccl = lim.ccl_a;
+    st.core.dcl = lim.dcl_a;
+    st.core.cvl = lim.cvl_v;
+    st.core.dvl = lim.dvl_v;
+    st.core.critical = false;
+    st.core.allow_charge = true;
+    st.core.allow_discharge = true;
+    st.core.identity_verified = true;
+    st.core.limits_verified = true;
+    st.core.complete = (st.core.bus_v > 0.0f && st.core.capacity_ah > 0.0f);
+
+    out = st;
+    return true;
+}
+
+// -------------------- 4. SmartLi DC/DC Modbus (hpeyerl candidate) --------------------
+
+inline void build_smartli_dcdc_req(uint8_t addr, uint16_t start_reg, uint16_t count, uint8_t out[8]) {
+    out[0] = addr;
+    out[1] = 0x04;
+    out[2] = static_cast<uint8_t>((start_reg >> 8) & 0xFF);
+    out[3] = static_cast<uint8_t>(start_reg & 0xFF);
+    out[4] = static_cast<uint8_t>((count >> 8) & 0xFF);
+    out[5] = static_cast<uint8_t>(count & 0xFF);
+    uint16_t crc = modbus_crc16(out, 6);
+    out[6] = static_cast<uint8_t>(crc & 0xFF);
+    out[7] = static_cast<uint8_t>((crc >> 8) & 0xFF);
+}
+
+inline bool parse_smartli_dcdc_block(
+    const uint8_t* blk0_rx, size_t blk0_len,
+    const uint8_t* blk1_rx, size_t blk1_len,
+    uint8_t expected_addr, uint32_t now_ms, const PolicyLimits& lim, PackState& out)
+{
+    // blk0: 0x0000..0x0006 (7 regs -> 14B + 5B = 19B)
+    // blk1: 0x1030..0x103F (16 regs -> 32B + 5B = 37B)
+    if (blk0_len < 19 || blk1_len < 37) return false;
+    if (blk0_rx[0] != expected_addr || blk0_rx[1] != 0x04 || blk0_rx[2] < 14) return false;
+    if (blk1_rx[0] != expected_addr || blk1_rx[1] != 0x04 || blk1_rx[2] < 32) return false;
+    size_t l0 = blk0_rx[2] + 5u, l1 = blk1_rx[2] + 5u;
+    if (blk0_len < l0 || blk1_len < l1) return false;
+    if (modbus_crc16(blk0_rx, l0 - 2) != static_cast<uint16_t>(blk0_rx[l0 - 2] | (blk0_rx[l0 - 1] << 8))) return false;
+    if (modbus_crc16(blk1_rx, l1 - 2) != static_cast<uint16_t>(blk1_rx[l1 - 2] | (blk1_rx[l1 - 1] << 8))) return false;
+
+    auto r0 = [&](size_t idx) { return be_u16(blk0_rx + 3 + 2 * idx); };
+    auto r1 = [&](size_t idx) { return be_u16(blk1_rx + 3 + 2 * idx); };
+
+    PackState st{};
+    st.detected_proto = PROTO_SMARTLI_DCDC;
+    st.addr = expected_addr;
+    st.core.sampled_ms = now_ms;
+    st.core.bus_v = r0(0) * 0.01f;
+    float tmax = static_cast<float>(static_cast<int16_t>(r0(5))) * 0.01f;
+    float tmin = static_cast<float>(static_cast<int16_t>(r0(6))) * 0.01f;
+    st.ext.max_temp_c = tmax;
+    st.ext.min_temp_c = tmin;
+    st.ext.avg_temp_c = 0.5f * (tmax + tmin);
+
+    st.core.bus_a = static_cast<float>(static_cast<int16_t>(r1(0))) * 0.01f;
+    uint16_t cap_raw = r1(2);
+    st.core.capacity_ah = (cap_raw > 0) ? static_cast<float>(cap_raw) : lim.default_capacity_ah;
+    st.core.soc = static_cast<float>(r1(4));
+    st.ext.soh = static_cast<float>(r1(5));
+    st.ext.rem_cap_ah = st.core.capacity_ah * (st.core.soc * 0.01f);
+    st.ext.prot_flags = r1(12);
+    st.ext.status_flags = static_cast<uint8_t>(r1(13) & 0xFFu);
+    st.ext.online_count = static_cast<uint8_t>(r1(15) & 0xFFu);
+
+    st.core.ccl = lim.ccl_a;
+    st.core.dcl = lim.dcl_a;
+    st.core.cvl = lim.cvl_v;
+    st.core.dvl = lim.dvl_v;
+    st.core.critical = (st.ext.prot_flags != 0);
+    st.core.allow_charge = !st.core.critical;
+    st.core.allow_discharge = !st.core.critical;
+    st.core.identity_verified = true;
+    st.core.limits_verified = true;
+    st.core.complete = (st.core.bus_v > 0.0f && st.core.capacity_ah > 0.0f);
+
+    out = st;
+    return true;
+}
+
+// -------------------- Bank Aggregation + Safety Gate --------------------
+
+inline bool aggregate_bank(
+    const PackState* packs, size_t count, uint32_t now_ms, const Policy& pol, BankExt& out)
+{
+    BankExt b{};
+    if (count == 0) {
+        out = b;
+        return false;
+    }
+
+    if (count == 1) {
+        const PackState& p = packs[0];
+        b.has_telemetry = p.core.complete;
+        b.pack_count = 1;
+        b.bus_v = p.core.bus_v;
+        b.rem_cap_ah = p.ext.rem_cap_ah;
+        b.soh = p.ext.soh;
+        b.min_temp_c = p.ext.min_temp_c;
+        b.max_temp_c = p.ext.max_temp_c;
+        b.avg_temp_c = p.ext.avg_temp_c;
+        b.min_cell_mv = p.ext.min_cell_mv;
+        b.max_cell_mv = p.ext.max_cell_mv;
+        b.cycles = p.ext.cycles;
+        b.warn_flags = p.ext.warn_flags;
+        b.prot_flags = p.ext.prot_flags;
+        b.fault_flags = p.ext.fault_flags;
+        b.cell_count = p.ext.cell_count;
+        std::memcpy(b.cell_mv, p.ext.cell_mv, sizeof(b.cell_mv));
+
+        if (pol.approved && usable(p.core, now_ms, pol) && pol.charge_cap >= 0.0f && pol.discharge_cap >= 0.0f) {
+            b.core.cvl = p.core.cvl;
+            b.core.dvl = p.core.dvl;
+            if (b.core.cvl > b.core.dvl) {
+                b.core.capacity_ah = p.core.capacity_ah;
+                b.core.soc = p.core.soc;
+                b.core.bus_a = p.core.bus_a;
+                b.core.ccl = p.core.allow_charge ? std::min(p.core.ccl, pol.charge_cap) : 0.0f;
+                b.core.dcl = p.core.allow_discharge ? std::min(p.core.dcl, pol.discharge_cap) : 0.0f;
+                b.core.charge = b.core.ccl > 0.0f;
+                b.core.discharge = b.core.dcl > 0.0f;
+                b.core.valid = true;
+            }
+        }
+        out = b;
+        return b.core.valid;
+    }
+
+    // 2 packs: delegate core safety and weighted SOC/current to audited safety_core.hpp
+    b.has_telemetry = packs[0].core.complete || packs[1].core.complete;
+    b.pack_count = 2;
+    b.core = aggregate(packs[0].core, packs[1].core, now_ms, pol);
+    b.bus_v = 0.5f * (packs[0].core.bus_v + packs[1].core.bus_v);
+    b.rem_cap_ah = packs[0].ext.rem_cap_ah + packs[1].ext.rem_cap_ah;
+    b.soh = std::min(packs[0].ext.soh, packs[1].ext.soh);
+    b.min_temp_c = std::min(packs[0].ext.min_temp_c, packs[1].ext.min_temp_c);
+    b.max_temp_c = std::max(packs[0].ext.max_temp_c, packs[1].ext.max_temp_c);
+    b.avg_temp_c = 0.5f * (packs[0].ext.avg_temp_c + packs[1].ext.avg_temp_c);
+    b.min_cell_mv = std::min(packs[0].ext.min_cell_mv, packs[1].ext.min_cell_mv);
+    b.max_cell_mv = std::max(packs[0].ext.max_cell_mv, packs[1].ext.max_cell_mv);
+    b.cycles = std::max(packs[0].ext.cycles, packs[1].ext.cycles);
+    b.warn_flags = packs[0].ext.warn_flags | packs[1].ext.warn_flags;
+    b.prot_flags = packs[0].ext.prot_flags | packs[1].ext.prot_flags;
+    b.fault_flags = packs[0].ext.fault_flags | packs[1].ext.fault_flags;
+    b.cell_count = packs[0].ext.cell_count;
+    std::memcpy(b.cell_mv, packs[0].ext.cell_mv, sizeof(b.cell_mv));
+    out = b;
+    return b.core.valid;
+}
+
+// -------------------- Pylontech LV RS485 Inverter Emulator --------------------
+
+inline uint16_t temp_c_to_deci_k(float temp_c) {
+    float dk = (temp_c + 273.1f) * 10.0f;
+    if (dk < 0.0f) dk = 0.0f;
+    if (dk > 65535.0f) dk = 65535.0f;
+    return static_cast<uint16_t>(std::lround(dk));
+}
+
+template <typename T>
+inline T clamp_val(T v, T lo, T hi) {
+    return (v < lo) ? lo : ((v > hi) ? hi : v);
+}
+
+inline size_t handle_pylontech_request(
+    const char* frame, size_t len, const BankExt& bank, char* out, size_t out_cap)
+{
+    char ver[3], adr[3], cid1[3], cid2[3];
+    const char* req_info = nullptr;
+    size_t req_info_len = 0;
+    if (!validate_ydt1363_frame(frame, len, ver, adr, cid1, cid2, req_info, req_info_len)) {
+        return 0;
+    }
+    if (!bank.has_telemetry) {
+        // BOOT / DISCOVERY: silent fail-closed until first real battery telemetry
+        return 0;
+    }
+
+    const char* resp_ver = (std::strcmp(ver, "00") == 0) ? "20" : ver;
+    const char* resp_adr = (std::strcmp(adr, "00") == 0) ? "02" : adr;
+    char info[320] = {0};
+
+    float soc_f = bank.core.valid ? bank.core.soc : 0.0f;
+    uint8_t soc_u8 = static_cast<uint8_t>(clamp_val<int>(static_cast<int>(std::lround(soc_f)), 0, 100));
+    uint8_t soh_u8 = static_cast<uint8_t>(clamp_val<int>(static_cast<int>(std::lround(bank.soh)), 0, 100));
+    uint16_t volt_mv = static_cast<uint16_t>(clamp_val<long>(std::lround(bank.bus_v * 1000.0f), 0L, 65535L));
+    uint16_t volt_cv = static_cast<uint16_t>(clamp_val<long>(std::lround(bank.bus_v * 100.0f), 0L, 65535L));
+    int16_t cur_ca = static_cast<int16_t>(clamp_val<long>(std::lround((bank.core.valid ? bank.core.bus_a : 0.0f) * 100.0f), -32768L, 32767L));
+    uint16_t avg_tk = temp_c_to_deci_k(bank.avg_temp_c);
+    uint16_t min_tk = temp_c_to_deci_k(bank.min_temp_c);
+    uint16_t max_tk = temp_c_to_deci_k(bank.max_temp_c);
+    uint16_t min_cell = (bank.min_cell_mv > 0) ? bank.min_cell_mv : 3200u;
+    uint16_t max_cell = (bank.max_cell_mv > 0) ? bank.max_cell_mv : 3200u;
+
+    uint16_t cvl_mv = static_cast<uint16_t>(clamp_val<long>(std::lround(bank.core.cvl * 1000.0f), 0L, 65535L));
+    uint16_t dvl_mv = static_cast<uint16_t>(clamp_val<long>(std::lround(bank.core.dvl * 1000.0f), 0L, 65535L));
+    uint16_t ccl_da = bank.core.valid ? static_cast<uint16_t>(clamp_val<long>(std::lround(bank.core.ccl * 10.0f), 0L, 65535L)) : 0u;
+    uint16_t dcl_da = bank.core.valid ? static_cast<uint16_t>(clamp_val<long>(std::lround(bank.core.dcl * 10.0f), 0L, 65535L)) : 0u;
+    uint8_t chg_dis_status = 0;
+    if (bank.core.valid) {
+        if (bank.core.charge && ccl_da > 0) chg_dis_status |= (1u << 7);
+        if (bank.core.discharge && dcl_da > 0) chg_dis_status |= (1u << 6);
+    }
+
+    if (std::strcmp(cid2, "61") == 0) {
+        // 49 bytes (98 ASCII hex chars) matching Fahmula/Pylontech V3.5 system analog
+        std::snprintf(
+            info, sizeof(info),
+            "%04X%04X%02X%04X%04X%02X%02X%04X%04X%04X%04X%04X%04X%04X%04X%04X%04X%04X%04X%04X%04X%04X%04X%04X%04X%04X",
+            volt_mv, static_cast<uint16_t>(cur_ca), soc_u8,
+            bank.cycles, bank.cycles, soh_u8, soh_u8,
+            max_cell, 0x0101u, min_cell, 0x0108u,
+            avg_tk, max_tk, 0x0101u, min_tk, 0x0101u,
+            avg_tk, max_tk, 0x0101u, min_tk, 0x0101u,
+            avg_tk, max_tk, 0x0101u, min_tk, 0x0101u);
+        return build_ydt1363_frame(resp_ver, resp_adr, cid1, "00", info, out, out_cap);
+    }
+
+    if (std::strcmp(cid2, "62") == 0) {
+        uint8_t a1 = 0, a2 = 0, p1 = 0, p2 = 0;
+        if (bank.warn_flags & 0x0004u) a1 |= (1u << 7); // Pack OV
+        if (bank.warn_flags & 0x0008u) a1 |= (1u << 6); // Pack UV
+        if (bank.warn_flags & 0x0001u) a1 |= (1u << 5); // Cell OV
+        if (bank.warn_flags & 0x0002u) a1 |= (1u << 4); // Cell UV
+        if (bank.warn_flags & 0x0500u) a1 |= (1u << 3); // Temp High
+        if (bank.warn_flags & 0x0A00u) a1 |= (1u << 2); // Temp Low
+        if (bank.warn_flags & 0x0010u) a2 |= (1u << 6); // Chg OC
+        if (bank.warn_flags & 0x0020u) a2 |= (1u << 5); // Disg OC
+        if (bank.prot_flags & 0x0002u) p1 |= (1u << 7); // Mod OV
+        if (bank.prot_flags & 0x0008u) p1 |= (1u << 6); // Mod UV
+        if (bank.prot_flags & 0x0001u) p1 |= (1u << 5); // Cell OV
+        if (bank.prot_flags & 0x0004u) p1 |= (1u << 4); // Cell UV
+        if (bank.prot_flags & 0x0A00u) p1 |= (1u << 3); // OT
+        if (bank.prot_flags & 0x1400u) p1 |= (1u << 2); // UT
+        if (bank.prot_flags & 0x0030u) p2 |= (1u << 6); // Chg OC
+        if (bank.prot_flags & 0x00C0u) p2 |= (1u << 5); // Disg OC
+        if (!bank.core.valid || bank.fault_flags != 0) p2 |= (1u << 3); // System fault / inhibit
+        std::snprintf(info, sizeof(info), "%02X%02X%02X%02X", a1, a2, p1, p2);
+        return build_ydt1363_frame(resp_ver, resp_adr, cid1, "00", info, out, out_cap);
+    }
+
+    if (std::strcmp(cid2, "63") == 0) {
+        std::snprintf(info, sizeof(info), "%04X%04X%04X%04X%02X",
+                      cvl_mv, dvl_mv, ccl_da, dcl_da, chg_dis_status);
+        return build_ydt1363_frame(resp_ver, resp_adr, cid1, "00", info, out, out_cap);
+    }
+
+    if (std::strcmp(cid2, "47") == 0) {
+        // Pylontech V3.3 per-pack management info (10 bytes: ADR + same 9 limit/status bytes)
+        std::snprintf(info, sizeof(info), "%s%04X%04X%04X%04X%02X",
+                      resp_adr, cvl_mv, dvl_mv, ccl_da, dcl_da, chg_dis_status);
+        return build_ydt1363_frame(resp_ver, resp_adr, cid1, "00", info, out, out_cap);
+    }
+
+    if (std::strcmp(cid2, "42") == 0) {
+        uint8_t m = (bank.cell_count > 0 && bank.cell_count <= 16) ? bank.cell_count : 15;
+        char* p = info;
+        size_t rem = sizeof(info);
+        int w = std::snprintf(p, rem, "00%02X%02X", 1, m);
+        p += w; rem -= static_cast<size_t>(w);
+        for (uint8_t i = 0; i < m; ++i) {
+            uint16_t mv = (bank.cell_mv[i] > 0) ? bank.cell_mv[i] : static_cast<uint16_t>(volt_mv / m);
+            w = std::snprintf(p, rem, "%04X", mv);
+            p += w; rem -= static_cast<size_t>(w);
+        }
+        uint16_t rem_cah = static_cast<uint16_t>(clamp_val<long>(std::lround(bank.rem_cap_ah * 100.0f), 0L, 65535L));
+        uint16_t full_cah = static_cast<uint16_t>(clamp_val<long>(std::lround(bank.core.capacity_ah * 100.0f), 0L, 65535L));
+        std::snprintf(p, rem, "04%04X%04X%04X%04X%04X%04X%04X02%04X%04X",
+                      avg_tk, avg_tk, min_tk, max_tk,
+                      static_cast<uint16_t>(cur_ca), volt_cv, rem_cah, full_cah, bank.cycles);
+        return build_ydt1363_frame(resp_ver, resp_adr, cid1, "00", info, out, out_cap);
+    }
+
+    if (std::strcmp(cid2, "44") == 0) {
+        uint8_t m = (bank.cell_count > 0 && bank.cell_count <= 16) ? bank.cell_count : 15;
+        char* p = info;
+        size_t rem = sizeof(info);
+        int w = std::snprintf(p, rem, "00%02X%02X", 1, m);
+        p += w; rem -= static_cast<size_t>(w);
+        for (uint8_t i = 0; i < m; ++i) {
+            w = std::snprintf(p, rem, "00");
+            p += w; rem -= static_cast<size_t>(w);
+        }
+        uint8_t fet = 0;
+        if (bank.core.valid) {
+            if (bank.core.discharge) fet |= 0x01u;
+            if (bank.core.charge) fet |= 0x02u;
+        }
+        uint8_t sys = bank.core.valid ? 0x10u : 0x20u; // Standby vs TurnOff/Fault
+        std::snprintf(p, rem, "0400000000000007000000000000%02X0000%02X", fet, sys);
+        return build_ydt1363_frame(resp_ver, resp_adr, cid1, "00", info, out, out_cap);
+    }
+
+    if (std::strcmp(cid2, "4F") == 0) {
+        return build_ydt1363_frame(resp_ver, resp_adr, cid1, "00", "", out, out_cap);
+    }
+
+    if (std::strcmp(cid2, "51") == 0) {
+        // 10B DeviceName ("SHOTO_BRDG") + 2B Ver (01 00) + 20B Manufacturer ("PYLON               ")
+        const char* ascii_hex =
+            "53484F544F5F42524447"
+            "0100"
+            "50594C4F4E202020202020202020202020202020";
+        return build_ydt1363_frame(resp_ver, resp_adr, cid1, "00", ascii_hex, out, out_cap);
+    }
+
+    if (std::strcmp(cid2, "92") == 0) {
+        std::snprintf(info, sizeof(info), "%02X", bank.pack_count > 0 ? bank.pack_count : 1);
+        return build_ydt1363_frame(resp_ver, resp_adr, cid1, "00", info, out, out_cap);
+    }
+
+    // Unknown CID2 -> protocol-compliant invalid CID2 return code (0x04)
+    return build_ydt1363_frame(resp_ver, resp_adr, cid1, "04", "", out, out_cap);
+}

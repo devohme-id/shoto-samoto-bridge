@@ -1,0 +1,7 @@
+9600
+None
+COM3
+Chinese
+5
+6
+7
