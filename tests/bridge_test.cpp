@@ -196,7 +196,7 @@ int main() {
         assert(std::fabs(bank.core.ccl - 50.0f) < 0.01f); // capped conservatively
 
         char req[64], out[400];
-        for (const char* cid2 : {"61", "62", "63", "42", "44", "47", "4F", "51", "92"}) {
+        for (const char* cid2 : {"60", "61", "62", "63", "42", "44", "47", "4F", "51", "92"}) {
             size_t rlen = build_ydt1363_frame("20", "02", "46", cid2, "", req, sizeof(req));
             size_t olen = handle_pylontech_request(req, rlen, bank, out, sizeof(out));
             assert(olen > 0 && verify_ydt_checksum(out, olen));
@@ -205,6 +205,18 @@ int main() {
                 assert(std::strstr(out, "D480B3B001F40320C0") != nullptr);
             }
         }
+
+        // Exact Samoto IHF6200/ILS6300 live captured V3.5 60H polls (ADR=02 & ADR=12)
+        for (const char* raw60 : {"~200246600000FDAC\r", "~201246600000FDAB\r"}) {
+            size_t olen60 = handle_pylontech_request(raw60, std::strlen(raw60), bank, out, sizeof(out));
+            assert(olen60 > 0 && verify_ydt_checksum(out, olen60));
+            assert(std::strstr(out, "466F7263655F4C000000") != nullptr);
+            assert(std::strstr(out, "50796C6F6E") != nullptr);
+        }
+        assert(handle_pylontech_request("~200246600000FDAC\r", 18, bank, out, sizeof(out)) > 0 &&
+               std::strncmp(out, "~200246006082", 13) == 0);
+        assert(handle_pylontech_request("~201246600000FDAB\r", 18, bank, out, sizeof(out)) > 0 &&
+               std::strncmp(out, "~201246006082", 13) == 0);
 
         // Fail-closed test 1: stale data (now_ms = 12000 > 5000 + 5000) -> 63H must inhibit (0000 0000 00)
         BankExt stale_bank{};
@@ -217,6 +229,7 @@ int main() {
         // Fail-closed test 2: boot (has_telemetry == false) -> silent (olen == 0)
         BankExt boot_bank{};
         assert(handle_pylontech_request(req, rlen, boot_bank, out, sizeof(out)) == 0);
+        assert(handle_pylontech_request("~200246600000FDAC\r", 18, boot_bank, out, sizeof(out)) == 0);
     }
 
     // 6. Live SD-BA430-15S-V23-V22 hardware captures (140B TBD TLV @ id=1 & shifted FC04 @ id=214)
@@ -300,8 +313,264 @@ int main() {
         size_t rlen = build_ydt1363_frame("20", "02", "46", "63", "", req, sizeof(req));
         size_t olen = handle_pylontech_request(req, rlen, bank, out, sizeof(out));
         assert(olen > 0 && verify_ydt_checksum(out, olen));
+
+        // 6a. Leading TX->RX turnaround glitch bytes prepended to 140-byte TLV frame still parse cleanly
+        uint8_t glitch_tlv[2 + sizeof(tlv_140b)];
+        glitch_tlv[0] = 0x00;
+        glitch_tlv[1] = 0xFF;
+        std::memcpy(glitch_tlv + 2, tlv_140b, sizeof(tlv_140b));
+        PackState pg{};
+        assert(parse_tbd_binary_resp(glitch_tlv, sizeof(glitch_tlv), 1, 1000, lim, pg));
+        assert(std::fabs(pg.core.soc - 84.22f) < 0.02f);
+        assert(std::fabs(pg.core.bus_v - 50.03f) < 0.02f);
+
+        // 6b. Leading turnaround glitch bytes prepended to 87-byte Modbus V1.2 frame still parse cleanly
+        uint8_t glitch_mb[2 + sizeof(modbus_87b)];
+        glitch_mb[0] = 0x00;
+        glitch_mb[1] = 0xFF;
+        std::memcpy(glitch_mb + 2, modbus_87b, sizeof(modbus_87b));
+        PackState pmg{};
+        assert(parse_shoto_modbus_v12_resp(glitch_mb, sizeof(glitch_mb), 214, 1000, lim, pmg));
+        assert(std::fabs(pmg.core.soc - 84.22f) < 0.02f);
+        assert(std::fabs(pmg.core.bus_v - 49.98f) < 0.02f);
+
+        // 6c. Corrupted TLV frame where pack bus_v disagrees with sum of cells by >3V is rejected even with valid checksum
+        uint8_t bad_tlv[sizeof(tlv_140b)];
+        std::memcpy(bad_tlv, tlv_140b, sizeof(tlv_140b));
+        // Tag 0x08 (bus_v) sits at bytes [84..85]: 0x13 0x8B (50.03V) -> overwrite to 0x17 0x70 (60.00V)
+        bad_tlv[84] = 0x17;
+        bad_tlv[85] = 0x70;
+        bad_tlv[sizeof(bad_tlv) - 2] = tbd_checksum(bad_tlv, sizeof(bad_tlv) - 2);
+        PackState p_bad{};
+        assert(!parse_tbd_binary_resp(bad_tlv, sizeof(bad_tlv), 1, 1000, lim, p_bad));
+
+        // 6d. Unapproved policy preserves raw_soc diagnostic while failing closed on safety core
+        Policy unapproved_pol = pol;
+        unapproved_pol.approved = false;
+        BankExt unapproved_bank{};
+        assert(!aggregate_bank(&p, 1, 1500, unapproved_pol, unapproved_bank));
+        assert(!unapproved_bank.core.valid);
+        assert(unapproved_bank.core.ccl == 0.0f);
+        assert(unapproved_bank.core.dcl == 0.0f);
+        assert(unapproved_bank.core.soc == 0.0f);
+        assert(std::fabs(unapproved_bank.raw_soc - 84.22f) < 0.02f);
+
+        // 6e. Corrupted/mismatched TLV header frame with valid outer checksum must NOT fall through into Format A
+        uint8_t bad_tlv_plen[sizeof(tlv_140b)];
+        std::memcpy(bad_tlv_plen, tlv_140b, sizeof(tlv_140b));
+        bad_tlv_plen[3] = 0x84; // triggers Format B mismatch while keeping outer EOI 0x0D & valid tbd_checksum
+        bad_tlv_plen[sizeof(bad_tlv_plen) - 2] = tbd_checksum(bad_tlv_plen, sizeof(bad_tlv_plen) - 2);
+        PackState p_fallthrough{};
+        assert(!parse_tbd_binary_resp(bad_tlv_plen, sizeof(bad_tlv_plen), 1, 1000, lim, p_fallthrough));
+
+        // 6f. 1-pack Samoto V3.5 60H response (~201246600000FDAB -> LENID 8062 / 98 hex chars)
+        size_t olen60_1 = handle_pylontech_request("~201246600000FDAB\r", 18, bank, out, sizeof(out));
+        assert(olen60_1 > 0 && verify_ydt_checksum(out, olen60_1));
+        assert(std::strncmp(out, "~201246008062", 13) == 0);
+
+        // 6g. Normal -10A discharging (SD-BA430 tag 0x06 word 1 = 0x0002) must NOT trigger Pylontech 62H Cell UV alarm
+        uint8_t dis_tlv[sizeof(tlv_140b)];
+        std::memcpy(dis_tlv, tlv_140b, sizeof(tlv_140b));
+        dis_tlv[38] = 0x79; dis_tlv[39] = 0x18; // -10.00A -> 31000
+        dis_tlv[70] = 0x00; dis_tlv[71] = 0x02; // live tag 0x06 word 1 = 0x0002 (discharging)
+        dis_tlv[sizeof(dis_tlv) - 2] = tbd_checksum(dis_tlv, sizeof(dis_tlv) - 2);
+        PackState p_dis{};
+        assert(parse_tbd_binary_resp(dis_tlv, sizeof(dis_tlv), 1, 1600, lim, p_dis));
+        assert(p_dis.ext.warn_flags == 0u && p_dis.ext.prot_flags == 0u && p_dis.ext.status_flags == 0x02u);
+        BankExt dis_bank{};
+        assert(aggregate_bank(&p_dis, 1, 1600, pol, dis_bank));
+        size_t olen62_ok = handle_pylontech_request("~200246620000FDAA\r", 18, dis_bank, out, sizeof(out));
+        assert(olen62_ok > 0 && verify_ydt_checksum(out, olen62_ok));
+        assert(std::strstr(out, "00000000") != nullptr && std::strstr(out, "10000000") == nullptr);
+
+        // Genuine low cell (2750mV <= 2800mV) MUST still raise Pylontech 62H Cell UV alarm (a1 = 0x10)
+        uint8_t uv_tlv[sizeof(dis_tlv)];
+        std::memcpy(uv_tlv, dis_tlv, sizeof(dis_tlv));
+        uv_tlv[6] = 0x0A; uv_tlv[7] = 0xBE; // cell 0 = 2750 mV
+        uv_tlv[sizeof(uv_tlv) - 2] = tbd_checksum(uv_tlv, sizeof(uv_tlv) - 2);
+        PackState p_uv{};
+        assert(parse_tbd_binary_resp(uv_tlv, sizeof(uv_tlv), 1, 1600, lim, p_uv));
+        assert((p_uv.ext.warn_flags & 0x0002u) != 0 && p_uv.ext.prot_flags == 0u);
+        BankExt uv_bank{};
+        assert(aggregate_bank(&p_uv, 1, 1600, pol, uv_bank));
+        size_t olen62_uv = handle_pylontech_request("~200246620000FDAA\r", 18, uv_bank, out, sizeof(out));
+        assert(olen62_uv > 0 && verify_ydt_checksum(out, olen62_uv));
+        assert(std::strstr(out, "10000000") != nullptr);
     }
 
-    std::cout << "ALL 6 C++17 bridge protocol & safety suites PASS\n";
+    // 7. 3-pack IHF6200 aggregation (300Ah, CCL=90A, DCL=150A) + Pylontech V3.5 60H 3-barcode response
+    {
+        PackState packs[3];
+        for (int i = 0; i < 3; ++i) {
+            packs[i].addr = static_cast<uint8_t>(i + 1);
+            packs[i].core.complete = true;
+            packs[i].core.identity_verified = true;
+            packs[i].core.limits_verified = true;
+            packs[i].core.allow_charge = true;
+            packs[i].core.allow_discharge = true;
+            packs[i].core.critical = false;
+            packs[i].core.sampled_ms = 5000;
+            packs[i].core.bus_v = 50.00f;
+            packs[i].core.capacity_ah = 100.0f;
+            packs[i].core.soc = 80.0f + 5.0f * i;       // 80, 85, 90% -> avg 85%
+            packs[i].core.bus_a = -40.0f - 5.0f * i;    // -40, -45, -50A -> sum -135A
+            packs[i].core.ccl = 90.0f;
+            packs[i].core.dcl = 150.0f;
+            packs[i].core.cvl = 53.6f;
+            packs[i].core.dvl = 46.0f;
+            packs[i].ext.cell_count = 15;
+            packs[i].ext.min_cell_mv = static_cast<uint16_t>(3325 + i);
+            packs[i].ext.max_cell_mv = static_cast<uint16_t>(3335 + i);
+            packs[i].ext.soh = 100.0f;
+            packs[i].ext.rem_cap_ah = packs[i].core.soc;
+        }
+        Policy pol{};
+        pol.approved = true;
+        pol.freshness_ms = 6000;
+        pol.max_delta_v = 1.0f;
+        pol.charge_cap = 90.0f;
+        pol.discharge_cap = 150.0f;
+
+        BankExt bank3{};
+        assert(aggregate_bank(packs, 3, 6000, pol, bank3));
+        assert(bank3.pack_count == 3);
+        assert(std::fabs(bank3.core.capacity_ah - 300.0f) < 0.01f);
+        assert(std::fabs(bank3.core.soc - 85.0f) < 0.01f);
+        assert(std::fabs(bank3.core.bus_a + 135.0f) < 0.01f);
+        assert(std::fabs(bank3.core.ccl - 90.0f) < 0.01f);
+        assert(std::fabs(bank3.core.dcl - 150.0f) < 0.01f);
+        assert(bank3.min_cell_mv == 3325 && bank3.max_cell_mv == 3337);
+
+        char out[400];
+        size_t olen60 = handle_pylontech_request("~200246600000FDAC\r", 18, bank3, out, sizeof(out));
+        assert(olen60 > 0 && verify_ydt_checksum(out, olen60));
+        assert(std::strncmp(out, "~2002460040A2", 13) == 0);
+        assert(std::strstr(out, "42343831303042323130544537303033") != nullptr);
+
+        // Fail-closed: Pack #3 delta-V > 1.0V must invalidate whole bank
+        packs[2].core.bus_v = 51.5f;
+        BankExt bad_v{};
+        assert(!aggregate_bank(packs, 3, 6000, pol, bad_v));
+        assert(!bad_v.core.valid);
+
+        // Fail-closed: Pack #3 stale > 6000ms must invalidate whole bank
+        packs[2].core.bus_v = 50.0f;
+        BankExt stale3{};
+        assert(!aggregate_bank(packs, 3, 12000, pol, stale3));
+        assert(!stale3.core.valid);
+    }
+
+    // 8) Runtime dynamic pack scaling & hot-plug / hot-unplug transitions (0..4 packs)
+    {
+        auto approx = [](float a, float b) { return std::fabs(a - b) < 0.01f; };
+        DynamicLimits dl;
+        dl.ccl_1pack_a = 45.0f;
+        dl.dcl_1pack_a = 80.0f;
+        dl.ccl_per_pack_a = 30.0f;
+        dl.dcl_per_pack_a = 50.0f;
+
+        float ccl = -1.0f, dcl = -1.0f;
+        compute_dynamic_caps(0, dl, ccl, dcl);
+        assert(approx(ccl, 0.0f) && approx(dcl, 0.0f));
+        compute_dynamic_caps(1, dl, ccl, dcl);
+        assert(approx(ccl, 45.0f) && approx(dcl, 80.0f));
+        compute_dynamic_caps(2, dl, ccl, dcl);
+        assert(approx(ccl, 60.0f) && approx(dcl, 100.0f));
+        compute_dynamic_caps(3, dl, ccl, dcl);
+        assert(approx(ccl, 90.0f) && approx(dcl, 150.0f));
+        compute_dynamic_caps(4, dl, ccl, dcl);
+        assert(approx(ccl, 120.0f) && approx(dcl, 200.0f));
+
+        DynamicLimits bad_dl;
+        bad_dl.ccl_1pack_a = -5.0f;
+        bad_dl.dcl_1pack_a = std::numeric_limits<float>::quiet_NaN();
+        compute_dynamic_caps(1, bad_dl, ccl, dcl);
+        assert(approx(ccl, 0.0f) && approx(dcl, 0.0f));
+
+        PackState packs[4]{};
+        for (int i = 0; i < 4; ++i) {
+            packs[i].addr = static_cast<uint8_t>(i + 1);
+            packs[i].core.complete = true;
+            packs[i].core.sampled_ms = 5000;
+            packs[i].core.bus_v = 51.20f + 0.02f * static_cast<float>(i);
+            packs[i].core.bus_a = 10.0f;
+            packs[i].core.soc = 80.0f;
+            packs[i].core.capacity_ah = 100.0f;
+            packs[i].core.ccl = 120.0f;
+            packs[i].core.dcl = 200.0f;
+            packs[i].core.cvl = 53.6f;
+            packs[i].core.dvl = 46.0f;
+            packs[i].core.allow_charge = true;
+            packs[i].core.allow_discharge = true;
+            packs[i].ext.rem_cap_ah = 80.0f;
+            packs[i].ext.soh = 100.0f;
+            packs[i].ext.cell_count = 15;
+            packs[i].ext.min_cell_mv = 3412;
+            packs[i].ext.max_cell_mv = 3415;
+            packs[i].ext.avg_temp_c = 30.0f;
+        }
+
+        Policy pol;
+        pol.approved = true;
+        pol.freshness_ms = 6000;
+        pol.max_delta_v = 1.0f;
+
+        auto verify_step = [&](const PackState* active, size_t n, float exp_cap, float exp_ccl, float exp_dcl) {
+            compute_dynamic_caps(n, dl, pol.charge_cap, pol.discharge_cap);
+            BankExt bank{};
+            assert(aggregate_bank(active, n, 6000, pol, bank));
+            assert(bank.core.valid);
+            assert(bank.pack_count == static_cast<uint8_t>(n));
+            assert(approx(bank.core.capacity_ah, exp_cap));
+            assert(approx(bank.core.ccl, exp_ccl));
+            assert(approx(bank.core.dcl, exp_dcl));
+
+            char out[512];
+            size_t olen60 = handle_pylontech_request("~200246600000FDAC\r", 18, bank, out, sizeof(out));
+            assert(olen60 > 18 && verify_ydt_checksum(out, olen60));
+            assert(out[olen60 - 1] == '\r');
+            // Barcodes count matches runtime pack_count (ADDR + '0'+count + count*32-byte ASCII barcodes)
+            size_t data_hex_len = olen60 - 1 - 13 - 4;
+            assert(data_hex_len == 4u + n * 64u);
+        };
+
+        // 1 -> 2 (ILS3600) -> 3 (IHF6200) -> 4 packs -> hot-unplug to 1 pack (slot #2)
+        verify_step(packs, 1, 100.0f, 45.0f, 80.0f);
+        verify_step(packs, 2, 200.0f, 60.0f, 100.0f);
+        verify_step(packs, 3, 300.0f, 90.0f, 150.0f);
+        verify_step(packs, 4, 400.0f, 120.0f, 200.0f);
+        verify_step(&packs[1], 1, 100.0f, 45.0f, 80.0f);
+
+        // Hot-unplug all -> 0 packs -> fail-closed silent boot state
+        compute_dynamic_caps(0, dl, pol.charge_cap, pol.discharge_cap);
+        BankExt zero_bank{};
+        assert(!aggregate_bank(packs, 0, 6000, pol, zero_bank));
+        assert(!zero_bank.core.valid);
+        assert(!zero_bank.has_telemetry);
+        assert(zero_bank.pack_count == 0);
+        assert(approx(zero_bank.core.ccl, 0.0f) && approx(zero_bank.core.dcl, 0.0f));
+        char out0[256];
+        assert(handle_pylontech_request("~200246600000FDAC\r", 18, zero_bank, out0, sizeof(out0)) == 0);
+        assert(handle_pylontech_request("~200246630000FDA9\r", 18, zero_bank, out0, sizeof(out0)) == 0);
+
+        // Hot-plug voltage mismatch > 1.0V -> fail-closed 0A inhibit
+        PackState mismatch[2] = {packs[0], packs[1]};
+        mismatch[0].core.bus_v = 50.00f;
+        mismatch[1].core.bus_v = 51.60f;
+        compute_dynamic_caps(2, dl, pol.charge_cap, pol.discharge_cap);
+        BankExt mm_bank{};
+        assert(!aggregate_bank(mismatch, 2, 6000, pol, mm_bank));
+        assert(!mm_bank.core.valid);
+        assert(approx(mm_bank.core.ccl, 0.0f) && approx(mm_bank.core.dcl, 0.0f));
+        char out_mm[256];
+        size_t olen63 = handle_pylontech_request("~200246630000FDA9\r", 18, mm_bank, out_mm, sizeof(out_mm));
+        assert(olen63 > 0);
+        uint8_t info_mm[32]{};
+        size_t info_len = 0;
+        assert(decode_hex_info(out_mm, olen63, info_mm, sizeof(info_mm), info_len));
+        assert(info_len == 10 && info_mm[9] == 0x00); // Charge & Discharge inhibit flags
+    }
+
+    std::cout << "ALL 8 C++17 bridge protocol & safety suites PASS\n";
     return 0;
 }

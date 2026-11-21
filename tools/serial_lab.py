@@ -19,6 +19,7 @@ CID2_NAMES = {
     "47": "Charge/Discharge Management (Pack)",
     "4F": "Protocol Version",
     "51": "Manufacturer Info",
+    "60": "GetSystemBasicInfo (V3.5)",
     "61": "System Analog Data (Master)",
     "62": "System Alarm Info (Master)",
     "63": "System Charge/Discharge Limits (Master)",
@@ -562,27 +563,148 @@ def decode(args):
             except ValueError as e:
                 print("ASCII ERR:", frame, str(e))
 
-    # Also check Modbus RTU / TianBangda binary candidates if present
-    if not ascii_frames and buf:
-        print(f"=== Raw buffer {len(buf)} bytes (no ~...\\r frames) ===")
-        print("HEX:", buf[:256].hex(" "))
-        for i in range(len(buf)):
+    # Also check Modbus RTU (FC03/FC04) & TianBangda binary candidates if present
+    if buf:
+        if not ascii_frames:
+            print(f"=== Raw buffer {len(buf)} bytes (no ~...\\r frames) ===")
+            print("HEX:", buf[:256].hex(" "))
+        tbd_hits = []
+        mb_reqs = {}
+        mb_resps = []
+        i = 0
+        while i < len(buf):
             if buf[i] in (0x7C, 0x7E) and i + 6 <= len(buf) and buf[i + 5] == 0x0D:
                 cand = buf[i:i + 6]
                 if cand[4] == tbd_checksum(cand[:4]):
-                    print(f"TBD Poll @+{i}: addr={cand[1]} cmd={cand[2]:#04x} hex={cand.hex(' ')}")
-            if i + 8 <= len(buf) and buf[i + 1] == 0x04:
+                    tbd_hits.append((i, cand[1], cand[2], cand.hex(" ")))
+                    i += 6
+                    continue
+            if 1 <= buf[i] <= 247 and i + 8 <= len(buf) and buf[i + 1] in (0x03, 0x04):
                 cand = buf[i:i + 8]
                 if modbus_crc(cand[:6]) == ((cand[7] << 8) | cand[6]):
                     reg = (cand[2] << 8) | cand[3]
                     cnt = (cand[4] << 8) | cand[5]
-                    print(f"Modbus FC04 Req @+{i}: addr={cand[0]} start={reg:#06x} count={cnt}")
-                elif i + 5 < len(buf):
+                    key = (cand[1], cand[0], reg, cnt, cand.hex(" "))
+                    mb_reqs[key] = mb_reqs.get(key, 0) + 1
+                    i += 8
+                    continue
+                if i + 5 < len(buf):
                     blen = buf[i + 2]
                     if 4 <= blen <= 120 and i + 3 + blen + 2 <= len(buf):
                         resp = buf[i:i + 3 + blen + 2]
                         if modbus_crc(resp[:-2]) == ((resp[-1] << 8) | resp[-2]):
-                            print(f"Modbus FC04 Resp @+{i}: addr={resp[0]} bytes={blen}")
+                            mb_resps.append((i, resp[1], resp[0], blen))
+                            i += len(resp)
+                            continue
+            i += 1
+        for pos, addr, cmd, hx in tbd_hits:
+            print(f"TBD Poll @+{pos}: addr={addr} cmd={cmd:#04x} hex={hx}")
+        if mb_reqs or mb_resps:
+            print(f"=== Found {sum(mb_reqs.values())} Modbus RTU Req / {len(mb_resps)} Resp frame(s) ===")
+            for (fc, addr, reg, cnt, hx), n in mb_reqs.items():
+                print(f"Modbus FC{fc:02X} Req: addr={addr} start={reg:#06x} count={cnt} (x{n}) hex={hx}")
+            for pos, fc, addr, blen in mb_resps:
+                print(f"Modbus FC{fc:02X} Resp @+{pos}: addr={addr} bytes={blen}")
+
+
+def esp_log(args):
+    """Capture live ESP32 Serial Monitor output to a timestamped log file and optional per-cell CSV."""
+    import serial
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    csv_path = Path(args.csv) if getattr(args, "csv", None) else None
+    if csv_path:
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_raw = not getattr(args, "no_raw", False)
+
+    s = serial.Serial()
+    s.port = args.port
+    s.baudrate = args.baud
+    s.bytesize = 8
+    s.parity = serial.PARITY_NONE
+    s.stopbits = 1
+    s.timeout = 0.2
+    s.dtr = False
+    s.rts = False
+    s.open()
+
+    bat_re = re.compile(r"\[BAT [^\]]+\].*?\bV=([0-9.]+)V\s+I=(-?[0-9.]+)A\s+SOC=([0-9.]+)%\s+T=(-?[0-9.]+)C")
+    cells_hdr_re = re.compile(r"\[CELLS P(\d+)\s+addr=(\d+)\s+n=(\d+)\s+min=(\d+)mV\s+max=(\d+)mV\s+dV=(\d+)mV\]")
+    cell_kv_re = re.compile(r"\bC(\d+)=(\d+)")
+
+    count = 0
+    csv_rows = 0
+    latest_bat = {"v_pack": "", "i_a": "", "soc_pct": "", "t_c": ""}
+    csv_f = open(csv_path, "w", encoding="utf-8") if csv_path else None
+    try:
+        if csv_f:
+            cols = [f"c{i:02d}_mv" for i in range(1, 17)]
+            csv_f.write("timestamp,pack,addr,v_pack,i_a,soc_pct,t_c,min_mv,max_mv,dv_mv," + ",".join(cols) + "\n")
+            csv_f.flush()
+
+        start = time.monotonic()
+        query_delay = min(2.2, max(0.0, args.seconds * 0.25))
+        sent_queries = False
+        saw_raw = False
+        toggled_raw = False
+        with open(out_path, "w", encoding="utf-8") as f:
+            while (time.monotonic() - start) < args.seconds:
+                elapsed = time.monotonic() - start
+                if not sent_queries and elapsed >= query_delay:
+                    s.write(b"status\n")
+                    s.flush()
+                    time.sleep(0.15)
+                    s.write(b"cells\n")
+                    s.flush()
+                    sent_queries = True
+
+                raw_line = s.readline()
+                if raw_line:
+                    text = raw_line.decode("utf-8", "replace").rstrip("\r\n")
+                    ts = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                    line = f"[{ts}] {text}"
+                    f.write(line + "\n")
+                    f.flush()
+                    print(line, flush=True)
+                    count += 1
+
+                    bm = bat_re.search(text)
+                    if bm:
+                        latest_bat = {
+                            "v_pack": bm.group(1), "i_a": bm.group(2),
+                            "soc_pct": bm.group(3), "t_c": bm.group(4),
+                        }
+                    if csv_f:
+                        cm = cells_hdr_re.search(text)
+                        if cm:
+                            cvals = {int(k): v for k, v in cell_kv_re.findall(text)}
+                            cell_cols = [cvals.get(i, "") for i in range(1, 17)]
+                            row = [
+                                ts, cm.group(1), cm.group(2),
+                                latest_bat["v_pack"], latest_bat["i_a"], latest_bat["soc_pct"], latest_bat["t_c"],
+                                cm.group(4), cm.group(5), cm.group(6),
+                            ] + cell_cols
+                            csv_f.write(",".join(row) + "\n")
+                            csv_f.flush()
+                            csv_rows += 1
+
+                    if ("[INV RX]" in text or "[INV TX]" in text or "[INV RAW" in text or
+                            "Raw Inverter frame logging: ON" in text):
+                        saw_raw = True
+                    elif "Raw Inverter frame logging: OFF" in text and ensure_raw:
+                        s.write(b"raw\n")
+                        s.flush()
+                if ensure_raw and not saw_raw and not toggled_raw and (time.monotonic() - start) >= 2.5:
+                    s.write(b"raw\n")
+                    s.flush()
+                    toggled_raw = True
+    finally:
+        if csv_f:
+            csv_f.close()
+        s.close()
+    print(f"Saved {count} lines to {args.out}")
+    if csv_path:
+        print(f"Saved {csv_rows} per-cell row(s) to {args.csv}")
 
 
 def main():
@@ -616,6 +738,15 @@ def main():
     q = sp.add_parser("decode", help="Offline decode of captured JSONL")
     q.add_argument("input")
     q.set_defaults(fn=decode)
+
+    q = sp.add_parser("esp-log", help="Capture live ESP32 Serial Monitor output to log file")
+    q.add_argument("--port", required=True)
+    q.add_argument("--baud", type=int, default=115200)
+    q.add_argument("--seconds", type=int, default=15)
+    q.add_argument("--out", default="data/esp32_debug.log")
+    q.add_argument("--csv", default=None, help="Optional CSV output path for per-cell telemetry")
+    q.add_argument("--no-raw", action="store_true", help="Do not auto-enable raw INV logging")
+    q.set_defaults(fn=esp_log)
 
     a = p.parse_args()
     if a.mode == "probe" and any(not 1 <= i <= 247 for i in a.ids):

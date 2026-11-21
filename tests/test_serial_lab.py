@@ -1,4 +1,4 @@
-import contextlib, unittest, sys, types, io
+import contextlib, tempfile, unittest, sys, types, io
 from pathlib import Path
 from unittest import mock
 
@@ -12,6 +12,7 @@ from serial_lab import (
     decode_shoto_modbus_v12,
     decode_tbd_telemetry,
     decode_ydt1363_42,
+    esp_log,
     inspect_ascii,
     modbus_crc,
     pylon_checksum,
@@ -213,6 +214,54 @@ class TestLab(unittest.TestCase):
         self.assertEqual(seen_tx[0], build_tbd_poll(1, 0x7C, 0x01))
         self.assertIn("#define SHOTO_PROTOCOL PROTO_TBD_BINARY", out)
         self.assertIn("#define PACK1_ADDR     1", out)
+
+    def test_samoto_pin12_captured_frames(self):
+        f02 = inspect_ascii(b"~200246600000FDAC\r")
+        f12 = inspect_ascii(b"~201246600000FDAB\r")
+        self.assertEqual(f02, {"ver": "20", "adr": "02", "cid1": "46", "cid2": "60", "payload": ""})
+        self.assertEqual(f12, {"ver": "20", "adr": "12", "cid1": "46", "cid2": "60", "payload": ""})
+        self.assertEqual(modbus_crc(bytes.fromhex("010300010003")), 0x0B54)
+
+    def test_esp_log_writes_timestamped_file(self):
+        lines = [
+            b"[BAT TBD_BINARY] packs=1 valid=YES V=50.00V I=-5.20A SOC=84.2% T=32.4C CCL=45.0A DCL=80.0A\n",
+            b"[CELLS P1 addr=1 n=15 min=3328mV max=3335mV dV=7mV] C01=3332 C02=3332 C03=3328 C04=3328 C05=3332 C06=3331 C07=3333 C08=3332 C09=3332 C10=3332 C11=3335 C12=3332 C13=3335 C14=3332 C15=3333\n",
+            b"[INV RX] ~200246600000FDAC\n",
+            b"[INV TX] ~200246008062...\n",
+        ]
+        written = []
+        class FakeSer:
+            def open(self): pass
+            def close(self): pass
+            def flush(self): pass
+            def write(self, data): written.append(data)
+            def readline(self): return lines.pop(0) if lines else b""
+
+        fake_mod = types.SimpleNamespace(PARITY_NONE="N", Serial=lambda: FakeSer())
+        with tempfile.TemporaryDirectory() as td:
+            out_file = Path(td) / "sub" / "esp32_debug.log"
+            csv_file = Path(td) / "sub" / "cells_log.csv"
+            args = types.SimpleNamespace(
+                port="/dev/null", baud=115200, seconds=0.05, out=str(out_file), csv=str(csv_file), no_raw=False
+            )
+            buf = io.StringIO()
+            with mock.patch.dict(sys.modules, {"serial": fake_mod}), \
+                 mock.patch.object(serial_lab.time, "sleep"), \
+                 contextlib.redirect_stdout(buf):
+                esp_log(args)
+            content = out_file.read_text(encoding="utf-8")
+            self.assertIn("[BAT TBD_BINARY]", content)
+            self.assertIn("[CELLS P1 addr=1", content)
+            self.assertIn("[INV RX] ~200246600000FDAC", content)
+            self.assertIn("[INV TX] ~200246008062...", content)
+            self.assertIn(b"status\n", written)
+            self.assertIn(b"cells\n", written)
+            csv_lines = csv_file.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(csv_lines), 2)
+            self.assertIn("timestamp,pack,addr,v_pack,i_a,soc_pct,t_c,min_mv,max_mv,dv_mv,c01_mv", csv_lines[0])
+            self.assertIn(",1,1,50.00,-5.20,84.2,32.4,3328,3335,7,3332,", csv_lines[1])
+            self.assertIn(",3333,", csv_lines[1])
+            self.assertIn("Saved 4 lines", buf.getvalue())
 
 
 if __name__ == "__main__":
