@@ -219,6 +219,89 @@ int main() {
         assert(handle_pylontech_request(req, rlen, boot_bank, out, sizeof(out)) == 0);
     }
 
-    std::cout << "ALL 5 C++17 bridge protocol & safety suites PASS\n";
+    // 6. Live SD-BA430-15S-V23-V22 hardware captures (140B TBD TLV @ id=1 & shifted FC04 @ id=214)
+    {
+        // Real 140-byte TLV response from /dev/cu.usbserial-B002C8GU on 7C 01 01 00 02 0D
+        const uint8_t tlv_140b[] = {
+            0x7e,0x01,0x01,0x86,
+            0x01,0x0f,0x0d,0x08,0x0d,0x06,0x0d,0x05,0x0d,0x06,0x0d,0x07,0x0d,0x05,0x0d,0x07,
+            0x0d,0x07,0x0d,0x06,0x0d,0x06,0x0d,0x07,0x0d,0x08,0x0d,0x08,0x0d,0x07,0x0d,0x06,
+            0x02,0x01,0x75,0x30,0x03,0x01,0x20,0xe6,0x04,0x01,0x27,0x10,0x05,0x08,0x00,0x54,
+            0x00,0x54,0x00,0x54,0x00,0x54,0x20,0x57,0x20,0x55,0x20,0x54,0x20,0x54,0x06,0x05,
+            0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x07,0x01,0x00,0x05,0x08,0x01,
+            0x13,0x8b,0x09,0x01,0x27,0x10,0x0a,0x01,0x00,0x00,0x0b,0x01,0x00,0x00,0x01,0xe9,
+            0x0c,0x01,0x00,0x00,0x01,0xd4,0x0d,0x01,0x00,0x02,0xf6,0x70,0x0e,0x01,0x00,0x02,
+            0xb2,0x00,0x0f,0x01,0x00,0x00,0x61,0xcd,0x10,0x01,0x00,0x00,0x5c,0xca,0x11,0x01,
+            0x13,0x8d,0x12,0x01,0x00,0x00,0xec,0x0d
+        };
+        static_assert(sizeof(tlv_140b) == 140, "expected 140-byte SD-BA430 TLV capture");
+
+        PolicyLimits lim{};
+        PackState p{};
+        assert(parse_tbd_binary_resp(tlv_140b, sizeof(tlv_140b), 1, 1000, lim, p));
+        assert(p.detected_proto == PROTO_TBD_BINARY);
+        assert(p.ext.cell_count == 15);
+        assert(p.ext.cell_mv[0] == 3336 && p.ext.cell_mv[14] == 3334);
+        assert(std::fabs(p.core.bus_v - 50.03f) < 0.02f);
+        assert(std::fabs(p.core.bus_a) < 0.01f);
+        assert(std::fabs(p.core.soc - 84.22f) < 0.02f);
+        assert(std::fabs(p.ext.soh - 100.0f) < 0.01f);
+        assert(std::fabs(p.core.capacity_ah - 100.0f) < 0.01f);
+        assert(p.ext.cycles == 5);
+        assert(std::fabs(p.ext.temps_c[0] - 34.0f) < 0.1f);
+        assert(p.core.allow_charge && p.core.allow_discharge && !p.core.critical);
+
+        // Real 87-byte FC04 0x0FFF qty=41 response at addr=214 (0xD6)
+        const uint8_t modbus_87b[] = {
+            0xd6,0x04,0x52,
+            0x13,0x86,0x27,0x10,0x03,0x48,0x02,0xe4,0x03,0x02,0x00,0x00,0x00,0x00,0x1c,0x00,
+            0x20,0xe6,0x00,0x05,0x27,0x10,0x03,0x02,0x00,0x2e,0x00,0x0f,0x0d,0x08,0x0d,0x06,
+            0x0d,0x04,0x0d,0x06,0x0d,0x07,0x0d,0x05,0x0d,0x08,0x0d,0x08,0x0d,0x07,0x0d,0x07,
+            0x0d,0x08,0x0d,0x07,0x0d,0x08,0x0d,0x07,0x0d,0x06,0x00,0x00,0x00,0x04,0x00,0x22,
+            0x00,0x22,0x00,0x22,0x00,0x22,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+            0x00,0x00,0xed,0x41
+        };
+        static_assert(sizeof(modbus_87b) == 87, "expected 87-byte SD-BA430 FC04 capture");
+
+        PackState pm{};
+        assert(parse_shoto_modbus_v12_resp(modbus_87b, sizeof(modbus_87b), 214, 1000, lim, pm));
+        assert(pm.detected_proto == PROTO_MODBUS_V12);
+        assert(pm.ext.cell_count == 15);
+        assert(pm.ext.cell_mv[0] == 3336 && pm.ext.cell_mv[14] == 3334);
+        assert(std::fabs(pm.core.bus_v - 49.98f) < 0.02f);
+        assert(std::fabs(pm.core.soc - 84.22f) < 0.02f);
+        assert(std::fabs(pm.ext.soh - 100.0f) < 0.01f);
+        assert(pm.ext.cycles == 5);
+        assert(pm.ext.temp_count == 4 && std::fabs(pm.ext.temps_c[0] - 34.0f) < 0.1f);
+        assert(pm.core.allow_charge && pm.core.allow_discharge);
+
+        // Also verify standard 39-reg (83-byte) slice works with valid CRC
+        uint8_t modbus_83b[83];
+        std::memcpy(modbus_83b, modbus_87b, 81);
+        modbus_83b[2] = 78;
+        uint16_t crc39 = modbus_crc16(modbus_83b, 81);
+        modbus_83b[81] = static_cast<uint8_t>(crc39 & 0xFFu);
+        modbus_83b[82] = static_cast<uint8_t>((crc39 >> 8) & 0xFFu);
+        PackState pm39{};
+        assert(parse_shoto_modbus_v12_resp(modbus_83b, sizeof(modbus_83b), 214, 1000, lim, pm39));
+        assert(pm39.ext.cell_count == 15 && pm39.ext.cycles == 5);
+        assert(pm39.ext.temp_count == 4 && std::fabs(pm39.ext.temps_c[3] - 34.0f) < 0.1f);
+
+        // Verify 1-pack aggregation + Pylontech 63H frame generation
+        Policy pol{};
+        pol.approved = true;
+        pol.freshness_ms = 5000;
+        pol.max_delta_v = 0.5f;
+        pol.charge_cap = 50.0f;
+        pol.discharge_cap = 80.0f;
+        BankExt bank{};
+        assert(aggregate_bank(&p, 1, 1500, pol, bank));
+        char req[64], out[256];
+        size_t rlen = build_ydt1363_frame("20", "02", "46", "63", "", req, sizeof(req));
+        size_t olen = handle_pylontech_request(req, rlen, bank, out, sizeof(out));
+        assert(olen > 0 && verify_ydt_checksum(out, olen));
+    }
+
+    std::cout << "ALL 6 C++17 bridge protocol & safety suites PASS\n";
     return 0;
 }

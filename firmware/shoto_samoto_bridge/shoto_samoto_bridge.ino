@@ -72,7 +72,7 @@ static size_t uart_transact(
                 last_byte = millis();
             }
         } else {
-            if (n > 0 && (millis() - last_byte) > 45) break;
+            if (n > 0 && (millis() - last_byte) > 65) break;
             vTaskDelay(pdMS_TO_TICKS(2));
         }
     }
@@ -100,21 +100,27 @@ static bool poll_single_pack(
         return parse_shoto_modbus_v12_resp(rx, n, addr, millis(), lim, out);
     }
     if (proto == PROTO_TBD_BINARY) {
+        // SD-BA430 / BMS PLUS V1.634 responds immediately WITHOUT 0xAA prefix (0xAA breaks its parser!).
+        for (uint8_t hdr : {uint8_t(0x7C), uint8_t(0x7E)}) {
+            uint8_t tx[6];
+            build_tbd_binary_req(addr, hdr, 0x01, tx);
+            size_t n = uart_transact(BatSerial, tx, sizeof(tx), rx, sizeof(rx), 450, true);
+            if (parse_tbd_binary_resp(rx, n, addr, millis(), lim, out)) return true;
+        }
+        // Fallback for older TianBangda V1.1 boards needing 16x 0xAA UART wakeup
         static const uint8_t wake[16] = {
             0xAA,0xAA,0xAA,0xAA,0xAA,0xAA,0xAA,0xAA,
             0xAA,0xAA,0xAA,0xAA,0xAA,0xAA,0xAA,0xAA
         };
-        if (BatSerial.available() == 0) {
-            bat_set_tx(true);
-            BatSerial.write(wake, sizeof(wake));
-            BatSerial.flush();
-            bat_set_tx(false);
-            vTaskDelay(pdMS_TO_TICKS(20));
-        }
+        bat_set_tx(true);
+        BatSerial.write(wake, sizeof(wake));
+        BatSerial.flush();
+        bat_set_tx(false);
+        vTaskDelay(pdMS_TO_TICKS(25));
         for (uint8_t hdr : {uint8_t(0x7C), uint8_t(0x7E)}) {
             uint8_t tx[6];
             build_tbd_binary_req(addr, hdr, 0x01, tx);
-            size_t n = uart_transact(BatSerial, tx, sizeof(tx), rx, sizeof(rx), 400, true);
+            size_t n = uart_transact(BatSerial, tx, sizeof(tx), rx, sizeof(rx), 450, true);
             if (parse_tbd_binary_resp(rx, n, addr, millis(), lim, out)) return true;
         }
         return false;
@@ -144,8 +150,21 @@ static bool poll_single_pack(
 
 static bool run_autodetect(const PolicyLimits& lim) {
     Serial.println("[SCAN] Memulai deteksi otomatis 4 protokol Shoto (read-only)...");
-    const uint8_t mb_addrs[] = {38, 39, 40, 41, 1, 2, 3, 4};
+    const uint8_t dcdc_addrs[] = {61, 62, 214, 215, 1, 2, 3, 4};
+    const uint8_t mb_addrs[] = {38, 39, 40, 41, 61, 62, 214, 215, 1, 2, 3, 4};
     PackState tmp{};
+    for (uint8_t a : {uint8_t(1), uint8_t(2)}) {
+        esp_task_wdt_reset();
+        if (poll_single_pack(PROTO_TBD_BINARY, a, lim, tmp)) {
+            g_active_proto = PROTO_TBD_BINARY;
+            g_pack_addrs[0] = a;
+            g_pack_addrs[1] = static_cast<uint8_t>(a + 1);
+            Serial.printf("[SCAN] COCOK! TBD_BINARY @ addr=%u (V=%.2fV SOC=%.1f%%)\n",
+                          a, tmp.core.bus_v, tmp.core.soc);
+            return true;
+        }
+        vTaskDelay(pdMS_TO_TICKS(40));
+    }
     for (uint8_t a : mb_addrs) {
         esp_task_wdt_reset();
         if (poll_single_pack(PROTO_MODBUS_V12, a, lim, tmp)) {
@@ -158,25 +177,13 @@ static bool run_autodetect(const PolicyLimits& lim) {
         }
         vTaskDelay(pdMS_TO_TICKS(40));
     }
-    for (uint8_t a : {uint8_t(1), uint8_t(2), uint8_t(3), uint8_t(4)}) {
+    for (uint8_t a : dcdc_addrs) {
         esp_task_wdt_reset();
         if (poll_single_pack(PROTO_SMARTLI_DCDC, a, lim, tmp)) {
             g_active_proto = PROTO_SMARTLI_DCDC;
             g_pack_addrs[0] = a;
             g_pack_addrs[1] = static_cast<uint8_t>(a + 1);
             Serial.printf("[SCAN] COCOK! SMARTLI_DCDC @ addr=%u (V=%.2fV SOC=%.1f%%)\n",
-                          a, tmp.core.bus_v, tmp.core.soc);
-            return true;
-        }
-        vTaskDelay(pdMS_TO_TICKS(40));
-    }
-    for (uint8_t a : {uint8_t(1), uint8_t(2)}) {
-        esp_task_wdt_reset();
-        if (poll_single_pack(PROTO_TBD_BINARY, a, lim, tmp)) {
-            g_active_proto = PROTO_TBD_BINARY;
-            g_pack_addrs[0] = a;
-            g_pack_addrs[1] = static_cast<uint8_t>(a + 1);
-            Serial.printf("[SCAN] COCOK! TBD_BINARY @ addr=%u (V=%.2fV SOC=%.1f%%)\n",
                           a, tmp.core.bus_v, tmp.core.soc);
             return true;
         }

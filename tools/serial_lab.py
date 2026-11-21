@@ -35,14 +35,18 @@ def modbus_crc(data: bytes) -> int:
     return crc
 
 
-def build_modbus_fc04(addr: int, start_reg: int, count: int) -> bytes:
+def build_modbus_read(addr: int, fc: int, start_reg: int, count: int) -> bytes:
     payload = bytes([
-        addr & 0xFF, 0x04,
+        addr & 0xFF, fc & 0xFF,
         (start_reg >> 8) & 0xFF, start_reg & 0xFF,
         (count >> 8) & 0xFF, count & 0xFF,
     ])
     crc = modbus_crc(payload)
     return payload + bytes([crc & 0xFF, (crc >> 8) & 0xFF])
+
+
+def build_modbus_fc04(addr: int, start_reg: int, count: int) -> bytes:
+    return build_modbus_read(addr, 0x04, start_reg, count)
 
 
 def tbd_checksum(data: bytes) -> int:
@@ -105,7 +109,7 @@ def decode_shoto_modbus_v12(frame: bytes) -> dict:
     if fc != 0x04 or len(frame) != 3 + byte_len + 2 or byte_len < 78:
         raise ValueError(f"unexpected fc/length: fc={fc:#x}, bytes={byte_len}")
     regs = [((frame[3 + 2 * i] << 8) | frame[4 + 2 * i]) for i in range(byte_len // 2)]
-    pack_v = regs[0] * 0.01
+    pack_v = round(regs[0] * 0.01, 2)
     raw_i = regs[1]
     # PDF Note 3: charge is negative, discharge is positive -> (raw - 10000) * 0.1
     # Canonical bridge (+ = charge, - = discharge): (10000 - raw) * 0.1
@@ -121,21 +125,42 @@ def decode_shoto_modbus_v12(frame: bytes) -> dict:
     fault_byte = reg_1006 & 0xFF
     status_byte = (reg_1006 >> 8) & 0xFF
     soc_pct = round(regs[8] * 0.01, 2)
-    soh_pct = round(regs[9] * 0.01, 2)
-    full_cap_ah = round(regs[10] * 0.1, 2)
-    cycles = regs[11]
-    cell_num = min(regs[12], 16)
-    cells_v = [
-        round(regs[13 + i] * 0.001, 3)
-        for i in range(cell_num) if regs[13 + i] != 0xFFFF
-    ]
-    ntc_num = min(regs[29], 4)
-    temps_c = [round((regs[30 + k] - 400) * 0.1, 2) for k in range(ntc_num)]
-    max_chg_cur_a = regs[34]
-    max_chg_temp_c = round((regs[35] - 400) * 0.1, 2)
-    min_chg_temp_c = round((regs[36] - 400) * 0.1, 2)
-    float_v = round(regs[37] * 0.01, 2)
-    boost_v = round(regs[38] * 0.01, 2)
+    ba430_shifted = len(regs) >= 35 and regs[12] > 16 and 1 <= regs[13] <= 16
+    if ba430_shifted:
+        cycles = regs[9]
+        soh_pct = round(regs[10] * 0.01, 2)
+        full_cap_ah = round(rem_cap_ah * 100.0 / soc_pct, 1) if soc_pct > 1.0 and rem_cap_ah > 0 else 100.0
+        cell_num = min(regs[13], 16)
+        cells_v = [
+            round(regs[14 + i] * 0.001, 3)
+            for i in range(cell_num) if regs[14 + i] != 0xFFFF
+        ]
+        ntc_num = min(regs[30], 4)
+        temps_c = [
+            float(regs[31 + k]) if regs[31 + k] < 200 else round((regs[31 + k] - 400) * 0.1, 2)
+            for k in range(ntc_num)
+        ]
+        max_chg_cur_a = regs[35] if len(regs) > 35 else 100
+        max_chg_temp_c = 55.0
+        min_chg_temp_c = 0.0
+        float_v = 53.2
+        boost_v = 54.4
+    else:
+        soh_pct = round(regs[9] * 0.01, 2)
+        full_cap_ah = round(regs[10] * 0.1, 2)
+        cycles = regs[11]
+        cell_num = min(regs[12], 16)
+        cells_v = [
+            round(regs[13 + i] * 0.001, 3)
+            for i in range(cell_num) if regs[13 + i] != 0xFFFF
+        ]
+        ntc_num = min(regs[29], 4)
+        temps_c = [round((regs[30 + k] - 400) * 0.1, 2) for k in range(ntc_num)]
+        max_chg_cur_a = regs[34]
+        max_chg_temp_c = round((regs[35] - 400) * 0.1, 2)
+        min_chg_temp_c = round((regs[36] - 400) * 0.1, 2)
+        float_v = round(regs[37] * 0.01, 2)
+        boost_v = round(regs[38] * 0.01, 2)
     return {
         "protocol": "SHOTO_MODBUS_V12",
         "addr": addr,
@@ -167,11 +192,83 @@ def decode_shoto_modbus_v12(frame: bytes) -> dict:
 
 
 def decode_tbd_telemetry(rx: bytes) -> dict:
-    """Decode TianBangda binary live-data frame (Form1::timer_data_Tick)."""
+    """Decode TianBangda binary live-data frame (both V1.634 TLV 140B & legacy V1.1 86/88B)."""
     if len(rx) < 48 or rx[-1] != 0x0D:
         raise ValueError("bad TBD frame length or EOI")
     if rx[-2] != tbd_checksum(rx[:-2]):
         raise ValueError("bad TBD checksum")
+
+    # Format B: SD-BA430 / BMS PLUS V1.634 TLV frame (7E <addr> 01 <plen> <tags...> <chk> 0D)
+    plen = rx[3]
+    if rx[0] == 0x7E and rx[2] == 0x01 and plen >= 40 and len(rx) == 4 + plen + 2 and rx[4] == 0x01:
+        pos = 4
+        end = 4 + plen
+        cells_v = []
+        current_a = 0.0
+        soc_pct = 0.0
+        soh_pct = 100.0
+        full_cap_ah = 100.0
+        temps_c = []
+        flags_hex = ""
+        cycles = 0
+        pack_v = 0.0
+        bus_v = 0.0
+        while pos + 2 <= end:
+            tag = rx[pos]
+            cnt = rx[pos + 1]
+            pos += 2
+            elem_sz = 4 if 0x0B <= tag <= 0x10 else 2
+            nbytes = cnt * elem_sz
+            if pos + nbytes > end:
+                break
+            if tag == 0x01:
+                cells_v = [
+                    round(((((rx[pos + 2 * i] & 0x1F) << 8) | rx[pos + 2 * i + 1])) / 1000.0, 3)
+                    for i in range(min(cnt, 16))
+                ]
+            elif tag == 0x02 and cnt >= 1:
+                raw_i = (rx[pos] << 8) | rx[pos + 1]
+                current_a = round((30000 - raw_i) / 100.0, 2)
+            elif tag == 0x03 and cnt >= 1:
+                soc_pct = round(((rx[pos] << 8) | rx[pos + 1]) / 100.0, 2)
+            elif tag == 0x04 and cnt >= 1:
+                soh_pct = round(((rx[pos] << 8) | rx[pos + 1]) / 100.0, 2)
+            elif tag == 0x05:
+                temps_c = [rx[pos + 2 * k + 1] - 50 for k in range(cnt)]
+            elif tag == 0x06:
+                flags_hex = bytes(rx[pos:pos + nbytes]).hex()
+            elif tag == 0x07 and cnt >= 1:
+                cycles = (rx[pos] << 8) | rx[pos + 1]
+            elif tag == 0x08 and cnt >= 1:
+                pack_v = round(((rx[pos] << 8) | rx[pos + 1]) / 100.0, 2)
+            elif tag == 0x09 and cnt >= 1:
+                full_cap_ah = round(((rx[pos] << 8) | rx[pos + 1]) / 100.0, 2)
+            elif tag == 0x11 and cnt >= 1:
+                bus_v = round(((rx[pos] << 8) | rx[pos + 1]) / 100.0, 2)
+            pos += nbytes
+        if pack_v <= 0 and bus_v > 0:
+            pack_v = bus_v
+        rem_cap_ah = round(full_cap_ah * soc_pct / 100.0, 2)
+        return {
+            "protocol": "TBD_BINARY",
+            "format": "TLV",
+            "header": hex(rx[0]),
+            "addr": rx[1],
+            "cell_num": len(cells_v),
+            "cells_v": cells_v,
+            "current_canonical_a": current_a,
+            "soc_pct": soc_pct,
+            "soh_pct": soh_pct,
+            "full_cap_ah": full_cap_ah,
+            "rem_cap_ah": rem_cap_ah,
+            "temps_c": temps_c,
+            "cycles": cycles,
+            "pack_v": pack_v,
+            "bus_v": bus_v,
+            "flags_hex": flags_hex,
+        }
+
+    # Format A: Legacy fixed 86/88-byte frame (MS-ShotoV1.1.exe timer_data_Tick)
     n_cells = rx[5]
     if n_cells not in (15, 16) or len(rx) < 56 + 2 * n_cells:
         raise ValueError(f"unsupported TBD cell count {n_cells} for len {len(rx)}")
@@ -289,74 +386,113 @@ def probe(args):
             time.sleep(0.15)
 
 
-def _serial_tx_rx(port: str, baud: int, tx: bytes, wait_s: float = 0.32) -> bytes:
+def _serial_tx_rx(port: str, baud: int, tx: bytes, wait_s: float = 0.45, idle_gap_s: float = 0.08) -> bytes:
     import serial
     with serial.Serial(port, baud, bytesize=8, parity=serial.PARITY_NONE,
-                       stopbits=1, timeout=0.05) as s:
+                       stopbits=1, timeout=0.04) as s:
         s.reset_input_buffer()
         s.reset_output_buffer()
         s.write(tx)
         s.flush()
-        deadline = time.monotonic() + wait_s
+        t_end = time.monotonic() + wait_s
+        last_rx = None
         buf = bytearray()
-        while time.monotonic() < deadline:
-            chunk = s.read(256)
+        while time.monotonic() < t_end:
+            chunk = s.read(512)
             if chunk:
                 buf.extend(chunk)
-                deadline = min(deadline, time.monotonic() + 0.08)
+                last_rx = time.monotonic()
+            elif last_rx is not None and (time.monotonic() - last_rx) >= idle_gap_s:
+                break
         return bytes(buf)
+
+
+def _log_raw_rx(proto: str, baud: int, addr: int, rx: bytes):
+    if rx:
+        print(f"[RAW RX proto={proto} baud={baud} id={addr} len={len(rx)}] {rx.hex(' ')}")
 
 
 def autodetect(args):
     """Read-only auto-detect across all 4 Shoto/TianBangda protocols over Autonics SCM-US48I."""
     found = []
-    modbus_ids = args.ids if args.ids else [38, 39, 40, 41, 1, 2, 3, 4]
+    tbd_ids = args.ids if args.ids else [1, 2]
+    modbus_ids = args.ids if args.ids else [61, 62, 214, 215, 38, 39, 1, 2, 3, 4]
+    dcdc_ids = args.ids if args.ids else [61, 62, 214, 215, 1, 2, 3, 4]
     for baud in args.baud:
         print(f"=== Scanning baud {baud} (8N1, read-only) ===", flush=True)
-        # 1. Shoto BMS Modbus V1.2 (0x0FFF..0x1025, 39 regs)
+        # 1. TianBangda Binary (TBD: try raw 0x7C/0x7E first for SD-BA430/V1.634, then 16x 0xAA fallback)
+        for addr in tbd_ids:
+            if not (1 <= addr <= 15):
+                continue
+            matched_tbd = False
+            for hdr in (0x7C, 0x7E):
+                for prefix in (b"", b"\xAA" * 16):
+                    tx = prefix + build_tbd_poll(addr, hdr, 0x01)
+                    rx = _serial_tx_rx(args.port, baud, tx, 0.45)
+                    if len(rx) >= 48:
+                        try:
+                            dec = decode_tbd_telemetry(rx)
+                            print("[FOUND] TBD_BINARY:", json.dumps(dec))
+                            found.append(("PROTO_TBD_BINARY", baud, addr, dec))
+                            matched_tbd = True
+                            break
+                        except ValueError:
+                            pass
+                    _log_raw_rx(f"TBD_BINARY_{hdr:02X}", baud, addr, rx)
+                    if len(rx) > 0:
+                        break
+                    time.sleep(0.05)
+                if matched_tbd:
+                    break
+
+        # 2. Shoto BMS Modbus V1.2 (0x0FFF..0x1025, 39 regs)
         for addr in modbus_ids:
             rx = _serial_tx_rx(args.port, baud, build_modbus_fc04(addr, 0x0FFF, 0x0027), 0.35)
-            if len(rx) >= 83:
+            if len(rx) >= 83 and rx[2] >= 78 and len(rx) >= 3 + rx[2] + 2:
                 try:
-                    dec = decode_shoto_modbus_v12(rx[:83])
+                    dec = decode_shoto_modbus_v12(rx[:3 + rx[2] + 2])
                     print("[FOUND] SHOTO_MODBUS_V12:", json.dumps(dec))
                     found.append(("PROTO_MODBUS_V12", baud, addr, dec))
+                    continue
                 except ValueError:
                     pass
-            time.sleep(0.08)
+            _log_raw_rx("SHOTO_MODBUS_V12", baud, addr, rx)
+            time.sleep(0.05)
 
-        # 2. SmartLi DC/DC Modbus (0x0000 Vbus / 0x1034 SOC)
-        for addr in [1, 2, 3, 4]:
-            rx = _serial_tx_rx(args.port, baud, build_modbus_fc04(addr, 0x0000, 0x0002), 0.30)
-            if len(rx) >= 9 and rx[0] == addr and rx[1] == 0x04 and rx[2] == 4:
-                crc = (rx[8] << 8) | rx[7]
-                if modbus_crc(rx[:7]) == crc:
-                    vbus = ((rx[3] << 8) | rx[4]) * 0.01
-                    vbat = ((rx[5] << 8) | rx[6]) * 0.01
-                    dec = {"protocol": "SMARTLI_DCDC", "addr": addr, "vbus_v": vbus, "vbat_v": vbat}
-                    print("[FOUND] SMARTLI_DCDC:", json.dumps(dec))
-                    found.append(("PROTO_SMARTLI_DCDC", baud, addr, dec))
-            time.sleep(0.08)
-
-        # 3. TianBangda Binary (TBD: 16x 0xAA wakeup + 0x7C/0x7E)
-        for addr in [1, 2]:
-            for hdr in (0x7C, 0x7E):
-                tx = (b"\xAA" * 16) + build_tbd_poll(addr, hdr, 0x01)
-                rx = _serial_tx_rx(args.port, baud, tx, 0.40)
-                if len(rx) >= 48:
-                    try:
-                        dec = decode_tbd_telemetry(rx)
-                        print("[FOUND] TBD_BINARY:", json.dumps(dec))
-                        found.append(("PROTO_TBD_BINARY", baud, addr, dec))
+        # 3. SmartLi DC/DC Modbus (0x0000 Vbus / 0x1034 SOC; factory addr 214 or site addr 61)
+        for addr in dcdc_ids:
+            matched_dcdc = False
+            for fc, reg, qty in ((0x04, 0x0000, 2), (0x03, 0x0000, 2), (0x04, 0x1030, 6), (0x03, 0x1030, 6)):
+                rx = _serial_tx_rx(args.port, baud, build_modbus_read(addr, fc, reg, qty), 0.25)
+                if not rx:
+                    continue
+                if len(rx) >= 5 and rx[0] == (addr & 0xFF) and rx[1] == fc and len(rx) == 3 + rx[2] + 2:
+                    crc = (rx[-1] << 8) | rx[-2]
+                    if modbus_crc(rx[:-2]) == crc and rx[2] >= 4:
+                        w0 = (rx[3] << 8) | rx[4]
+                        w1 = (rx[5] << 8) | rx[6]
+                        dec = {"protocol": "SMARTLI_DCDC", "addr": addr, "fc": fc, "reg": hex(reg)}
+                        if reg == 0x0000:
+                            dec["vbus_v"] = round(w0 * 0.01, 2)
+                            dec["vbat_v"] = round(w1 * 0.01, 2)
+                        else:
+                            dec["ibus_raw"] = w0
+                            if len(rx) >= 15:
+                                dec["soc"] = (rx[11] << 8) | rx[12]
+                        print("[FOUND] SMARTLI_DCDC:", json.dumps(dec))
+                        found.append(("PROTO_SMARTLI_DCDC", baud, addr, dec))
+                        matched_dcdc = True
                         break
-                    except ValueError:
-                        pass
-                time.sleep(0.08)
+                _log_raw_rx(f"SMARTLI_DCDC_FC{fc:02X}", baud, addr, rx)
+            if matched_dcdc:
+                continue
+            time.sleep(0.05)
 
         # 4. TianBangda YD/T 1363.3 ASCII (TBD_1363)
         for grp in ("01", "02"):
             tx = build_ydt1363_frame("26", "00", "46", "42", grp)
-            rx = _serial_tx_rx(args.port, baud, tx, 0.40)
+            rx = _serial_tx_rx(args.port, baud, tx, 0.35)
+            matched_1363 = False
             for frame in re.findall(rb"~[^~\r]{0,2048}\r", rx):
                 try:
                     info = inspect_ascii(frame)
@@ -364,17 +500,24 @@ def autodetect(args):
                         dec = decode_ydt1363_42(info["payload"])
                         print("[FOUND] TBD_1363:", json.dumps(dec))
                         found.append(("PROTO_TBD_1363", baud, int(grp, 16), dec))
+                        matched_1363 = True
                 except ValueError:
                     pass
-            time.sleep(0.08)
+            if rx and not matched_1363:
+                _log_raw_rx("TBD_1363", baud, int(grp, 16), rx)
+            time.sleep(0.05)
 
     if not found:
         print("\n[NO RESPONSE] Cek: (1) Baterai aktif & tombol RUN/RESET menyala, "
-              "(2) Pinout RJ45 Pin 1 & 2, (3) Polaritas A(+)/B(-) pada Autonics SCM-US48I.")
+              "(2) Pinout RJ45 Pin 1 & 2, (3) Polaritas A(+)/B(-) pada adaptor RS485, "
+              "(4) Pada software Windows tab 'DCDC Data' baris 16 cek nilai 'Modbus address' (mis. 61 atau 214) lalu uji `--ids <ADDR>`.")
     else:
         print("\n=== SUMMARY UNTUK firmware/shoto_samoto_bridge/config.h ===")
-        proto, baud, addr, _ = found[0]
-        addrs = sorted({a for p, b, a, _ in found if p == proto and b == baud})
+        priority = ("PROTO_TBD_BINARY", "PROTO_MODBUS_V12", "PROTO_TBD_1363", "PROTO_SMARTLI_DCDC")
+        proto = next((p for p in priority if any(fp == p for fp, _, _, _ in found)), found[0][0])
+        matches = [(b, a) for fp, b, a, _ in found if fp == proto]
+        baud = matches[0][0]
+        addrs = sorted({a for b, a in matches if b == baud})
         print(f"#define SHOTO_PROTOCOL {proto}")
         print(f"#define SHOTO_BAUD     {baud}")
         print(f"#define PACK_COUNT     {min(2, len(addrs))}")

@@ -169,6 +169,7 @@ inline bool parse_shoto_modbus_v12_resp(
     uint16_t rx_crc = static_cast<uint16_t>(rx[frame_len - 2] | (rx[frame_len - 1] << 8));
     if (modbus_crc16(rx, frame_len - 2) != rx_crc) return false;
 
+    size_t reg_cnt = static_cast<size_t>(rx[2]) / 2u;
     auto reg = [&](size_t idx) -> uint16_t {
         return be_u16(rx + 3 + 2 * idx);
     };
@@ -189,44 +190,87 @@ inline bool parse_shoto_modbus_v12_resp(
     st.ext.fault_flags = static_cast<uint8_t>(r1006 & 0xFFu);
     st.ext.status_flags = static_cast<uint8_t>((r1006 >> 8) & 0xFFu);
     st.core.soc = reg(8) * 0.01f;
-    st.ext.soh = reg(9) * 0.01f;
-    st.core.capacity_ah = reg(10) * 0.1f;
-    st.ext.cycles = reg(11);
 
-    uint16_t cnum = std::min<uint16_t>(reg(12), 16u);
-    st.ext.cell_count = static_cast<uint8_t>(cnum);
-    uint16_t cmin = 65535u, cmax = 0u;
-    for (uint16_t i = 0; i < cnum; ++i) {
-        uint16_t mv = reg(13 + i);
-        if (mv != 0xFFFFu) {
-            st.ext.cell_mv[i] = mv;
-            cmin = std::min(cmin, mv);
-            cmax = std::max(cmax, mv);
+    bool ba430_shifted = (reg(12) > 16u && reg(13) >= 1u && reg(13) <= 16u);
+    if (ba430_shifted) {
+        // Verified on live SD-BA430-15S @ addr=214 FC04 0x0FFF..0x1021
+        st.ext.cycles = reg(9);
+        st.ext.soh = reg(10) * 0.01f;
+        st.core.capacity_ah = (st.core.soc > 1.0f && st.ext.rem_cap_ah > 0.0f)
+            ? (st.ext.rem_cap_ah * 100.0f / st.core.soc)
+            : lim.default_capacity_ah;
+        uint16_t cnum = std::min<uint16_t>(reg(13), 16u);
+        st.ext.cell_count = static_cast<uint8_t>(cnum);
+        uint16_t cmin = 65535u, cmax = 0u;
+        for (uint16_t i = 0; i < cnum && (14u + i) < reg_cnt; ++i) {
+            uint16_t mv = reg(14u + i);
+            if (mv != 0xFFFFu && mv > 0u) {
+                st.ext.cell_mv[i] = mv;
+                cmin = std::min(cmin, mv);
+                cmax = std::max(cmax, mv);
+            }
         }
-    }
-    st.ext.min_cell_mv = (cmin == 65535u) ? 0 : cmin;
-    st.ext.max_cell_mv = cmax;
+        st.ext.min_cell_mv = (cmin == 65535u) ? 0 : cmin;
+        st.ext.max_cell_mv = cmax;
 
-    uint16_t tnum = std::min<uint16_t>(reg(29), 4u);
-    st.ext.temp_count = static_cast<uint8_t>(tnum);
-    float tmin = 999.0f, tmax = -999.0f, tsum = 0.0f;
-    for (uint16_t k = 0; k < tnum; ++k) {
-        float tc = (static_cast<float>(reg(30 + k)) - 400.0f) * 0.1f;
-        st.ext.temps_c[k] = tc;
-        tmin = std::min(tmin, tc);
-        tmax = std::max(tmax, tc);
-        tsum += tc;
-    }
-    st.ext.min_temp_c = (tnum > 0) ? tmin : avg_t;
-    st.ext.max_temp_c = (tnum > 0) ? tmax : avg_t;
-    st.ext.avg_temp_c = (tnum > 0) ? (tsum / tnum) : avg_t;
+        uint16_t tnum = (reg_cnt > 30u) ? std::min<uint16_t>(reg(30), 4u) : 0u;
+        st.ext.temp_count = static_cast<uint8_t>(tnum);
+        float tmin = 999.0f, tmax = -999.0f, tsum = 0.0f;
+        for (uint16_t k = 0; k < tnum && (31u + k) < reg_cnt; ++k) {
+            uint16_t tr = reg(31u + k);
+            float tc = (tr < 200u) ? static_cast<float>(tr) : (static_cast<float>(tr) - 400.0f) * 0.1f;
+            st.ext.temps_c[k] = tc;
+            tmin = std::min(tmin, tc);
+            tmax = std::max(tmax, tc);
+            tsum += tc;
+        }
+        st.ext.min_temp_c = (tnum > 0) ? tmin : avg_t;
+        st.ext.max_temp_c = (tnum > 0) ? tmax : avg_t;
+        st.ext.avg_temp_c = (tnum > 0) ? (tsum / tnum) : avg_t;
+        st.core.ccl = lim.ccl_a;
+        st.core.dcl = lim.dcl_a;
+        st.core.cvl = lim.cvl_v;
+        st.core.dvl = lim.dvl_v;
+    } else {
+        st.ext.soh = reg(9) * 0.01f;
+        st.core.capacity_ah = reg(10) * 0.1f;
+        st.ext.cycles = reg(11);
 
-    float bms_max_chg_cur = static_cast<float>(reg(34));
-    float bms_boost_v = reg(38) * 0.01f;
-    st.core.ccl = std::min(bms_max_chg_cur, lim.ccl_a);
-    st.core.dcl = lim.dcl_a;
-    st.core.cvl = (bms_boost_v > lim.dvl_v) ? std::min(bms_boost_v, lim.cvl_v) : lim.cvl_v;
-    st.core.dvl = lim.dvl_v;
+        uint16_t cnum = std::min<uint16_t>(reg(12), 16u);
+        st.ext.cell_count = static_cast<uint8_t>(cnum);
+        uint16_t cmin = 65535u, cmax = 0u;
+        for (uint16_t i = 0; i < cnum; ++i) {
+            uint16_t mv = reg(13 + i);
+            if (mv != 0xFFFFu) {
+                st.ext.cell_mv[i] = mv;
+                cmin = std::min(cmin, mv);
+                cmax = std::max(cmax, mv);
+            }
+        }
+        st.ext.min_cell_mv = (cmin == 65535u) ? 0 : cmin;
+        st.ext.max_cell_mv = cmax;
+
+        uint16_t tnum = std::min<uint16_t>(reg(29), 4u);
+        st.ext.temp_count = static_cast<uint8_t>(tnum);
+        float tmin = 999.0f, tmax = -999.0f, tsum = 0.0f;
+        for (uint16_t k = 0; k < tnum; ++k) {
+            float tc = (static_cast<float>(reg(30 + k)) - 400.0f) * 0.1f;
+            st.ext.temps_c[k] = tc;
+            tmin = std::min(tmin, tc);
+            tmax = std::max(tmax, tc);
+            tsum += tc;
+        }
+        st.ext.min_temp_c = (tnum > 0) ? tmin : avg_t;
+        st.ext.max_temp_c = (tnum > 0) ? tmax : avg_t;
+        st.ext.avg_temp_c = (tnum > 0) ? (tsum / tnum) : avg_t;
+
+        float bms_max_chg_cur = static_cast<float>(reg(34));
+        float bms_boost_v = reg(38) * 0.01f;
+        st.core.ccl = std::min(bms_max_chg_cur, lim.ccl_a);
+        st.core.dcl = lim.dcl_a;
+        st.core.cvl = (bms_boost_v > lim.dvl_v) ? std::min(bms_boost_v, lim.cvl_v) : lim.cvl_v;
+        st.core.dvl = lim.dvl_v;
+    }
 
     st.core.critical = (st.ext.prot_flags != 0) || (st.ext.fault_flags != 0);
     st.core.allow_charge = !st.core.critical && ((st.ext.status_flags & 0x04u) != 0);
@@ -258,6 +302,90 @@ inline bool parse_tbd_binary_resp(
     if (rx[1] != expected_addr) return false;
     if (rx[len - 2] != tbd_checksum(rx, len - 2)) return false;
 
+    // Format B: Live SD-BA430 / BMS PLUS V1.634 TLV frame (e.g. 140 bytes: 7E <addr> 01 <plen> <tags...> <chk> 0D)
+    uint8_t plen = rx[3];
+    if (rx[0] == 0x7E && rx[2] == 0x01 && plen >= 40 &&
+        len == static_cast<size_t>(4u + plen + 2u) && rx[4] == 0x01) {
+        PackState st{};
+        st.detected_proto = PROTO_TBD_BINARY;
+        st.addr = expected_addr;
+        st.core.sampled_ms = now_ms;
+        st.core.capacity_ah = lim.default_capacity_ah;
+
+        size_t pos = 4u;
+        size_t end = 4u + plen;
+        while (pos + 2u <= end) {
+            uint8_t tag = rx[pos];
+            uint8_t cnt = rx[pos + 1u];
+            pos += 2u;
+            size_t elem_sz = (tag >= 0x0Bu && tag <= 0x10u) ? 4u : 2u;
+            size_t bytes_needed = static_cast<size_t>(cnt) * elem_sz;
+            if (pos + bytes_needed > end) break;
+
+            if (tag == 0x01 && cnt >= 1) {
+                uint8_t nc = std::min<uint8_t>(cnt, 16u);
+                st.ext.cell_count = nc;
+                uint16_t cmin = 65535u, cmax = 0u;
+                for (uint8_t i = 0; i < nc; ++i) {
+                    uint16_t mv = static_cast<uint16_t>(be_u16(rx + pos + 2u * i) & 0x1FFFu);
+                    st.ext.cell_mv[i] = mv;
+                    cmin = std::min(cmin, mv);
+                    cmax = std::max(cmax, mv);
+                }
+                st.ext.min_cell_mv = (cmin == 65535u) ? 0u : cmin;
+                st.ext.max_cell_mv = cmax;
+            } else if (tag == 0x02 && cnt >= 1) {
+                st.core.bus_a = (30000.0f - static_cast<float>(be_u16(rx + pos))) * 0.01f;
+            } else if (tag == 0x03 && cnt >= 1) {
+                st.core.soc = static_cast<float>(be_u16(rx + pos)) * 0.01f;
+            } else if (tag == 0x04 && cnt >= 1) {
+                st.ext.soh = static_cast<float>(be_u16(rx + pos)) * 0.01f;
+            } else if (tag == 0x05 && cnt >= 1) {
+                uint8_t tn = std::min<uint8_t>(cnt, 5u);
+                st.ext.temp_count = tn;
+                float tmin = 999.0f, tmax = -999.0f, tsum = 0.0f;
+                for (uint8_t k = 0; k < tn; ++k) {
+                    float tc = static_cast<float>(rx[pos + 2u * k + 1u]) - 50.0f;
+                    st.ext.temps_c[k] = tc;
+                    tmin = std::min(tmin, tc);
+                    tmax = std::max(tmax, tc);
+                    tsum += tc;
+                }
+                st.ext.min_temp_c = tmin;
+                st.ext.max_temp_c = tmax;
+                st.ext.avg_temp_c = tsum / tn;
+            } else if (tag == 0x06) {
+                if (cnt >= 1) st.ext.prot_flags = be_u16(rx + pos);
+                if (cnt >= 2) st.ext.warn_flags = be_u16(rx + pos + 2u);
+            } else if (tag == 0x07 && cnt >= 1) {
+                st.ext.cycles = be_u16(rx + pos);
+            } else if (tag == 0x08 && cnt >= 1) {
+                st.core.bus_v = static_cast<float>(be_u16(rx + pos)) * 0.01f;
+            } else if (tag == 0x09 && cnt >= 1) {
+                uint16_t cap_cah = be_u16(rx + pos);
+                if (cap_cah > 0u) st.core.capacity_ah = static_cast<float>(cap_cah) * 0.01f;
+            } else if (tag == 0x11 && cnt >= 1 && st.core.bus_v <= 0.0f) {
+                st.core.bus_v = static_cast<float>(be_u16(rx + pos)) * 0.01f;
+            }
+            pos += bytes_needed;
+        }
+        st.ext.rem_cap_ah = st.core.capacity_ah * (st.core.soc * 0.01f);
+        st.core.ccl = lim.ccl_a;
+        st.core.dcl = lim.dcl_a;
+        st.core.cvl = lim.cvl_v;
+        st.core.dvl = lim.dvl_v;
+        st.core.critical = (st.ext.prot_flags != 0);
+        st.core.allow_charge = !st.core.critical;
+        st.core.allow_discharge = !st.core.critical;
+        st.core.identity_verified = (st.ext.cell_count > 0);
+        st.core.limits_verified = true;
+        st.core.complete = (st.core.bus_v > 0.0f && st.ext.cell_count > 0);
+        if (!st.core.complete) return false;
+        out = st;
+        return true;
+    }
+
+    // Format A: Legacy fixed 86/88-byte frame (TianBangda MS-ShotoV1.1.exe timer_data_Tick)
     uint8_t n_cells = rx[5];
     if ((n_cells != 15 && n_cells != 16) || len < static_cast<size_t>(56 + 2 * n_cells)) {
         return false;

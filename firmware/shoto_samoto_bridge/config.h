@@ -25,8 +25,8 @@
 //    - Mulai dari PACK_COUNT = 1 untuk uji 1 baterai terlebih dahulu.
 //    - Ubah ke 2 setelah kedua Shoto di-cascade (Fase A02) dan terbaca unik (Fase A03).
 #define PACK_COUNT       1
-#define PACK1_ADDR       38   // Untuk PROTO_AUTO akan dicoba 38, 39, 1, 2 otomatis
-#define PACK2_ADDR       39   // Ubah ke 2 jika baterai memakai ID 1 & 2
+#define PACK1_ADDR       1    // SD-BA430 TBD_BINARY = 1 (untuk PROTO_AUTO memindai 1, 2, 38, 39, 61, 214 otomatis)
+#define PACK2_ADDR       2    // Pack #2 default = 2 (atau 39 untuk Modbus V1.2)
 
 // 4. SISI INVERTER SAMOTO IHF6200 / ILS6300:
 //    - MODE_MONITOR_ONLY  = ESP32 HANYA membaca baterai & MENGINTIP request Samoto (tidak membalas)

@@ -1,8 +1,11 @@
-import unittest, sys
+import contextlib, unittest, sys, types, io
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import serial_lab
 from serial_lab import (
+    autodetect,
     build_modbus_fc04,
     build_tbd_poll,
     build_ydt1363_frame,
@@ -130,6 +133,86 @@ class TestLab(unittest.TestCase):
         self.assertEqual(d["pack_v"], 52.80)
         self.assertEqual(d["soc_pct"], 80.0)
         self.assertEqual(d["cycles"], 12)
+
+    def test_live_sd_ba430_tlv_140b_and_modbus_v12_shifted(self):
+        tlv = bytes.fromhex(
+            "7e010186010f0d080d060d050d060d070d050d070d070d060d060d070d080d080d070d06"
+            "02017530030120e604012710050800540054005400542057205520542054"
+            "060500000000000000000000070100050801138b090127100a010000"
+            "0b01000001e90c01000001d40d010002f6700e010002b2000f01000061cd100100005cca"
+            "1101138d12010000ec0d"
+        )
+        self.assertEqual(len(tlv), 140)
+        dt = decode_tbd_telemetry(tlv)
+        self.assertEqual(dt["protocol"], "TBD_BINARY")
+        self.assertEqual(dt["format"], "TLV")
+        self.assertEqual(dt["addr"], 1)
+        self.assertEqual(dt["cell_num"], 15)
+        self.assertEqual(dt["cells_v"][0], 3.336)
+        self.assertEqual(dt["cells_v"][-1], 3.334)
+        self.assertEqual(dt["current_canonical_a"], 0.0)
+        self.assertEqual(dt["soc_pct"], 84.22)
+        self.assertEqual(dt["soh_pct"], 100.0)
+        self.assertEqual(dt["temps_c"][:4], [34, 34, 34, 34])
+        self.assertEqual(dt["cycles"], 5)
+        self.assertEqual(dt["pack_v"], 50.03)
+        self.assertEqual(dt["full_cap_ah"], 100.0)
+        self.assertEqual(dt["bus_v"], 50.05)
+
+        mb87 = bytes.fromhex(
+            "d6045213862710034802e40302000000001c0020e6000527100302002e000f"
+            "0d080d060d040d060d070d050d080d080d070d070d080d070d080d070d06"
+            "000000040022002200220022000000000000000000000000ed41"
+        )
+        self.assertEqual(len(mb87), 87)
+        dm = decode_shoto_modbus_v12(mb87)
+        self.assertEqual(dm["addr"], 214)
+        self.assertEqual(dm["pack_v"], 49.98)
+        self.assertEqual(dm["soc_pct"], 84.22)
+        self.assertEqual(dm["soh_pct"], 100.0)
+        self.assertEqual(dm["cycles"], 5)
+        self.assertEqual(dm["cell_num"], 15)
+        self.assertEqual(dm["cells_v"][0], 3.336)
+        self.assertEqual(dm["temps_c"], [34.0, 34.0, 34.0, 34.0])
+
+        mb39_body = bytearray(mb87[:81])
+        mb39_body[2] = 78
+        crc39 = modbus_crc(bytes(mb39_body))
+        dm39 = decode_shoto_modbus_v12(bytes(mb39_body) + bytes([crc39 & 0xFF, (crc39 >> 8) & 0xFF]))
+        self.assertEqual(dm39["cell_num"], 15)
+        self.assertEqual(dm39["temps_c"], [34.0, 34.0, 34.0, 34.0])
+
+    def test_autodetect_prefers_no_aa_tbd_over_smartli(self):
+        tlv = bytes.fromhex(
+            "7e010186010f0d080d060d050d060d070d050d070d070d060d060d070d080d080d070d06"
+            "02017530030120e604012710050800540054005400542057205520542054"
+            "060500000000000000000000070100050801138b090127100a010000"
+            "0b01000001e90c01000001d40d010002f6700e010002b2000f01000061cd100100005cca"
+            "1101138d12010000ec0d"
+        )
+        dcdc_body = bytes.fromhex("d60304138d1386")
+        dcrc = modbus_crc(dcdc_body)
+        dcdc_resp = dcdc_body + bytes([dcrc & 0xFF, (dcrc >> 8) & 0xFF])
+
+        seen_tx = []
+        def fake_tx_rx(port, baud, tx, wait_s=0.45):
+            seen_tx.append(tx)
+            if tx == build_tbd_poll(1, 0x7C, 0x01):
+                return tlv
+            if tx == serial_lab.build_modbus_read(214, 0x03, 0x0000, 2):
+                return dcdc_resp
+            return b""
+
+        args = types.SimpleNamespace(port="/dev/null", baud=[9600], ids=None)
+        buf = io.StringIO()
+        with mock.patch.object(serial_lab, "_serial_tx_rx", side_effect=fake_tx_rx), \
+             mock.patch.object(serial_lab.time, "sleep"), \
+             contextlib.redirect_stdout(buf):
+            autodetect(args)
+        out = buf.getvalue()
+        self.assertEqual(seen_tx[0], build_tbd_poll(1, 0x7C, 0x01))
+        self.assertIn("#define SHOTO_PROTOCOL PROTO_TBD_BINARY", out)
+        self.assertIn("#define PACK1_ADDR     1", out)
 
 
 if __name__ == "__main__":
