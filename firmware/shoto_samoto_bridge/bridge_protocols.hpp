@@ -66,6 +66,8 @@ struct TelemetryExt {
     uint16_t cell_mv[16] = {0};
     uint16_t min_cell_mv = 0;
     uint16_t max_cell_mv = 0;
+    uint8_t min_cell_idx = 1;
+    uint8_t max_cell_idx = 1;
     uint8_t temp_count = 0;
     float temps_c[5] = {0};
     float min_temp_c = 25.0f;
@@ -102,6 +104,10 @@ struct BankExt {
     float avg_temp_c = 25.0f;
     uint16_t min_cell_mv = 0;
     uint16_t max_cell_mv = 0;
+    uint8_t min_cell_pack = 1;
+    uint8_t min_cell_idx = 1;
+    uint8_t max_cell_pack = 1;
+    uint8_t max_cell_idx = 1;
     uint16_t cycles = 0;
     uint16_t warn_flags = 0;
     uint16_t prot_flags = 0;
@@ -239,16 +245,19 @@ inline bool parse_shoto_modbus_v12_resp(
         uint16_t cnum = std::min<uint16_t>(reg(13), 16u);
         st.ext.cell_count = static_cast<uint8_t>(cnum);
         uint16_t cmin = 65535u, cmax = 0u;
+        uint8_t cmin_idx = 1u, cmax_idx = 1u;
         for (uint16_t i = 0; i < cnum && (14u + i) < reg_cnt; ++i) {
             uint16_t mv = reg(14u + i);
             if (mv != 0xFFFFu && mv > 0u) {
                 st.ext.cell_mv[i] = mv;
-                cmin = std::min(cmin, mv);
-                cmax = std::max(cmax, mv);
+                if (mv < cmin) { cmin = mv; cmin_idx = static_cast<uint8_t>(i + 1u); }
+                if (mv > cmax) { cmax = mv; cmax_idx = static_cast<uint8_t>(i + 1u); }
             }
         }
         st.ext.min_cell_mv = (cmin == 65535u) ? 0 : cmin;
         st.ext.max_cell_mv = cmax;
+        st.ext.min_cell_idx = cmin_idx;
+        st.ext.max_cell_idx = cmax_idx;
 
         uint16_t tnum = (reg_cnt > 30u) ? std::min<uint16_t>(reg(30), 4u) : 0u;
         st.ext.temp_count = static_cast<uint8_t>(tnum);
@@ -276,16 +285,19 @@ inline bool parse_shoto_modbus_v12_resp(
         uint16_t cnum = std::min<uint16_t>(reg(12), 16u);
         st.ext.cell_count = static_cast<uint8_t>(cnum);
         uint16_t cmin = 65535u, cmax = 0u;
+        uint8_t cmin_idx = 1u, cmax_idx = 1u;
         for (uint16_t i = 0; i < cnum; ++i) {
             uint16_t mv = reg(13 + i);
             if (mv != 0xFFFFu) {
                 st.ext.cell_mv[i] = mv;
-                cmin = std::min(cmin, mv);
-                cmax = std::max(cmax, mv);
+                if (mv < cmin) { cmin = mv; cmin_idx = static_cast<uint8_t>(i + 1u); }
+                if (mv > cmax) { cmax = mv; cmax_idx = static_cast<uint8_t>(i + 1u); }
             }
         }
         st.ext.min_cell_mv = (cmin == 65535u) ? 0 : cmin;
         st.ext.max_cell_mv = cmax;
+        st.ext.min_cell_idx = cmin_idx;
+        st.ext.max_cell_idx = cmax_idx;
 
         uint16_t tnum = std::min<uint16_t>(reg(29), 4u);
         st.ext.temp_count = static_cast<uint8_t>(tnum);
@@ -366,15 +378,18 @@ inline bool parse_tbd_binary_resp(
                     uint8_t nc = std::min<uint8_t>(cnt, 16u);
                     st.ext.cell_count = nc;
                     uint16_t cmin = 65535u, cmax = 0u;
+                    uint8_t cmin_idx = 1u, cmax_idx = 1u;
                     for (uint8_t i = 0; i < nc; ++i) {
                         uint16_t mv = static_cast<uint16_t>(be_u16(f + pos + 2u * i) & 0x1FFFu);
                         st.ext.cell_mv[i] = mv;
                         cell_sum_mv += mv;
-                        cmin = std::min(cmin, mv);
-                        cmax = std::max(cmax, mv);
+                        if (mv > 0u && mv < cmin) { cmin = mv; cmin_idx = static_cast<uint8_t>(i + 1u); }
+                        if (mv > cmax) { cmax = mv; cmax_idx = static_cast<uint8_t>(i + 1u); }
                     }
                     st.ext.min_cell_mv = (cmin == 65535u) ? 0u : cmin;
                     st.ext.max_cell_mv = cmax;
+                    st.ext.min_cell_idx = cmin_idx;
+                    st.ext.max_cell_idx = cmax_idx;
                 } else if (tag == 0x02 && cnt >= 1) {
                     st.core.bus_a = (30000.0f - static_cast<float>(be_u16(f + pos))) * 0.01f;
                 } else if (tag == 0x03 && cnt >= 1) {
@@ -473,16 +488,19 @@ inline bool parse_tbd_binary_resp(
         st.ext.cell_count = n_cells;
 
         uint16_t cmin = 65535u, cmax = 0u;
+        uint8_t cmin_idx = 1u, cmax_idx = 1u;
         uint32_t cell_sum_mv = 0u;
         for (uint8_t i = 0; i < n_cells; ++i) {
             uint16_t mv = static_cast<uint16_t>(((f[6 + 2 * i] & 0x1Fu) << 8) | f[7 + 2 * i]);
             st.ext.cell_mv[i] = mv;
             cell_sum_mv += mv;
-            cmin = std::min(cmin, mv);
-            cmax = std::max(cmax, mv);
+            if (mv > 0u && mv < cmin) { cmin = mv; cmin_idx = static_cast<uint8_t>(i + 1u); }
+            if (mv > cmax) { cmax = mv; cmax_idx = static_cast<uint8_t>(i + 1u); }
         }
-        st.ext.min_cell_mv = cmin;
+        st.ext.min_cell_mv = (cmin == 65535u) ? 0u : cmin;
         st.ext.max_cell_mv = cmax;
+        st.ext.min_cell_idx = cmin_idx;
+        st.ext.max_cell_idx = cmax_idx;
 
         uint16_t raw_i = be_u16(f + 8 + c);
         st.core.bus_a = (30000.0f - static_cast<float>(raw_i)) * 0.01f;
@@ -628,15 +646,18 @@ inline bool parse_tbd_1363_42_resp(
 
     size_t idx = 3;
     uint16_t cmin = 65535u, cmax = 0u;
+    uint8_t cmin_idx = 1u, cmax_idx = 1u;
     for (uint8_t i = 0; i < m; ++i) {
         uint16_t mv = be_u16(raw + idx);
         st.ext.cell_mv[i] = mv;
-        cmin = std::min(cmin, mv);
-        cmax = std::max(cmax, mv);
+        if (mv > 0u && mv < cmin) { cmin = mv; cmin_idx = static_cast<uint8_t>(i + 1u); }
+        if (mv > cmax) { cmax = mv; cmax_idx = static_cast<uint8_t>(i + 1u); }
         idx += 2;
     }
-    st.ext.min_cell_mv = cmin;
+    st.ext.min_cell_mv = (cmin == 65535u) ? 0u : cmin;
     st.ext.max_cell_mv = cmax;
+    st.ext.min_cell_idx = cmin_idx;
+    st.ext.max_cell_idx = cmax_idx;
 
     uint8_t n = raw[idx++];
     if (idx + 2 * n + 11 > rlen) return false;
@@ -773,6 +794,10 @@ inline bool aggregate_bank(
         b.avg_temp_c = p.ext.avg_temp_c;
         b.min_cell_mv = p.ext.min_cell_mv;
         b.max_cell_mv = p.ext.max_cell_mv;
+        b.min_cell_pack = (p.addr > 0u) ? p.addr : 1u;
+        b.min_cell_idx = (p.ext.min_cell_idx > 0u) ? p.ext.min_cell_idx : 1u;
+        b.max_cell_pack = b.min_cell_pack;
+        b.max_cell_idx = (p.ext.max_cell_idx > 0u) ? p.ext.max_cell_idx : 1u;
         b.cycles = p.ext.cycles;
         b.warn_flags = p.ext.warn_flags;
         b.prot_flags = p.ext.prot_flags;
@@ -814,8 +839,31 @@ inline bool aggregate_bank(
         b.min_temp_c = std::min(packs[0].ext.min_temp_c, packs[1].ext.min_temp_c);
         b.max_temp_c = std::max(packs[0].ext.max_temp_c, packs[1].ext.max_temp_c);
         b.avg_temp_c = 0.5f * (packs[0].ext.avg_temp_c + packs[1].ext.avg_temp_c);
-        b.min_cell_mv = std::min(packs[0].ext.min_cell_mv, packs[1].ext.min_cell_mv);
-        b.max_cell_mv = std::max(packs[0].ext.max_cell_mv, packs[1].ext.max_cell_mv);
+        uint16_t min_c0 = packs[0].ext.min_cell_mv, min_c1 = packs[1].ext.min_cell_mv;
+        uint8_t p0_id = (packs[0].addr > 0u) ? packs[0].addr : 1u;
+        uint8_t p1_id = (packs[1].addr > 0u) ? packs[1].addr : 2u;
+        uint8_t i0_min = (packs[0].ext.min_cell_idx > 0u) ? packs[0].ext.min_cell_idx : 1u;
+        uint8_t i1_min = (packs[1].ext.min_cell_idx > 0u) ? packs[1].ext.min_cell_idx : 1u;
+        uint8_t i0_max = (packs[0].ext.max_cell_idx > 0u) ? packs[0].ext.max_cell_idx : 1u;
+        uint8_t i1_max = (packs[1].ext.max_cell_idx > 0u) ? packs[1].ext.max_cell_idx : 1u;
+        if (min_c1 == 0u || (min_c0 > 0u && min_c0 <= min_c1)) {
+            b.min_cell_mv = min_c0;
+            b.min_cell_pack = p0_id;
+            b.min_cell_idx = i0_min;
+        } else {
+            b.min_cell_mv = min_c1;
+            b.min_cell_pack = p1_id;
+            b.min_cell_idx = i1_min;
+        }
+        if (packs[0].ext.max_cell_mv >= packs[1].ext.max_cell_mv) {
+            b.max_cell_mv = packs[0].ext.max_cell_mv;
+            b.max_cell_pack = p0_id;
+            b.max_cell_idx = i0_max;
+        } else {
+            b.max_cell_mv = packs[1].ext.max_cell_mv;
+            b.max_cell_pack = p1_id;
+            b.max_cell_idx = i1_max;
+        }
         b.cycles = std::max(packs[0].ext.cycles, packs[1].ext.cycles);
         b.warn_flags = packs[0].ext.warn_flags | packs[1].ext.warn_flags;
         b.prot_flags = packs[0].ext.prot_flags | packs[1].ext.prot_flags;
@@ -832,6 +880,7 @@ inline bool aggregate_bank(
     float sum_v = 0.0f, cap_sum = 0.0f, weighted_soc_sum = 0.0f, sum_i = 0.0f, sum_rem = 0.0f;
     float min_soh = 100.0f, min_t = 999.0f, max_t = -999.0f, sum_avg_t = 0.0f;
     uint16_t min_c = 65535u, max_c = 0u, max_cyc = 0u;
+    uint8_t min_cp = 1u, min_ci = 1u, max_cp = 1u, max_ci = 1u;
     float min_v = 999.0f, max_v = -999.0f;
     float min_ccl = 1e6f, min_dcl = 1e6f;
     float cvl_lim = 1e6f, dvl_lim = 0.0f;
@@ -849,8 +898,19 @@ inline bool aggregate_bank(
         min_t = std::min(min_t, p.ext.min_temp_c);
         max_t = std::max(max_t, p.ext.max_temp_c);
         sum_avg_t += p.ext.avg_temp_c;
-        if (p.ext.min_cell_mv > 0u) min_c = std::min(min_c, p.ext.min_cell_mv);
-        max_c = std::max(max_c, p.ext.max_cell_mv);
+        uint8_t pid = (p.addr > 0u) ? p.addr : static_cast<uint8_t>(i + 1u);
+        uint8_t pmin_i = (p.ext.min_cell_idx > 0u) ? p.ext.min_cell_idx : 1u;
+        uint8_t pmax_i = (p.ext.max_cell_idx > 0u) ? p.ext.max_cell_idx : 1u;
+        if (p.ext.min_cell_mv > 0u && p.ext.min_cell_mv < min_c) {
+            min_c = p.ext.min_cell_mv;
+            min_cp = pid;
+            min_ci = pmin_i;
+        }
+        if (p.ext.max_cell_mv > max_c) {
+            max_c = p.ext.max_cell_mv;
+            max_cp = pid;
+            max_ci = pmax_i;
+        }
         max_cyc = std::max(max_cyc, p.ext.cycles);
         b.warn_flags |= p.ext.warn_flags;
         b.prot_flags |= p.ext.prot_flags;
@@ -877,6 +937,10 @@ inline bool aggregate_bank(
     b.avg_temp_c = sum_avg_t / static_cast<float>(n);
     b.min_cell_mv = (min_c == 65535u) ? 0u : min_c;
     b.max_cell_mv = max_c;
+    b.min_cell_pack = min_cp;
+    b.min_cell_idx = min_ci;
+    b.max_cell_pack = max_cp;
+    b.max_cell_idx = max_ci;
     b.cycles = max_cyc;
     b.cell_count = packs[0].ext.cell_count;
     std::memcpy(b.cell_mv, packs[0].ext.cell_mv, sizeof(b.cell_mv));
@@ -975,15 +1039,23 @@ inline size_t handle_pylontech_request(
 
     if (std::strcmp(cid2, "61") == 0) {
         // 49 bytes (98 ASCII hex chars) matching Fahmula/Pylontech V3.5 system analog
+        // Samoto/Siseli decodes cell position uint16 as decimal (pack_id * 100 + cell_num)
+        uint16_t max_cell_pos = static_cast<uint16_t>(
+            clamp_val<uint16_t>(bank.max_cell_pack > 0u ? bank.max_cell_pack : 1u, 1u, 99u) * 100u +
+            clamp_val<uint16_t>(bank.max_cell_idx > 0u ? bank.max_cell_idx : 1u, 1u, 99u));
+        uint16_t min_cell_pos = static_cast<uint16_t>(
+            clamp_val<uint16_t>(bank.min_cell_pack > 0u ? bank.min_cell_pack : 1u, 1u, 99u) * 100u +
+            clamp_val<uint16_t>(bank.min_cell_idx > 0u ? bank.min_cell_idx : 1u, 1u, 99u));
+        uint16_t temp_pos = 101u;
         std::snprintf(
             info, sizeof(info),
             "%04X%04X%02X%04X%04X%02X%02X%04X%04X%04X%04X%04X%04X%04X%04X%04X%04X%04X%04X%04X%04X%04X%04X%04X%04X%04X",
             volt_mv, static_cast<uint16_t>(cur_ca), soc_u8,
             bank.cycles, bank.cycles, soh_u8, soh_u8,
-            max_cell, 0x0101u, min_cell, 0x0108u,
-            avg_tk, max_tk, 0x0101u, min_tk, 0x0101u,
-            avg_tk, max_tk, 0x0101u, min_tk, 0x0101u,
-            avg_tk, max_tk, 0x0101u, min_tk, 0x0101u);
+            max_cell, max_cell_pos, min_cell, min_cell_pos,
+            avg_tk, max_tk, temp_pos, min_tk, temp_pos,
+            avg_tk, max_tk, temp_pos, min_tk, temp_pos,
+            avg_tk, max_tk, temp_pos, min_tk, temp_pos);
         return build_ydt1363_frame(resp_ver, resp_adr, cid1, "00", info, out, out_cap);
     }
 

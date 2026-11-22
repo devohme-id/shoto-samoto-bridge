@@ -307,12 +307,28 @@ int main() {
         pol.max_delta_v = 0.5f;
         pol.charge_cap = 50.0f;
         pol.discharge_cap = 80.0f;
+        assert(p.ext.min_cell_mv == 3333 && p.ext.min_cell_idx == 3);
+        assert(p.ext.max_cell_mv == 3336 && p.ext.max_cell_idx == 1);
         BankExt bank{};
         assert(aggregate_bank(&p, 1, 1500, pol, bank));
+        assert(bank.min_cell_pack == 1 && bank.min_cell_idx == 3);
+        assert(bank.max_cell_pack == 1 && bank.max_cell_idx == 1);
         char req[64], out[256];
         size_t rlen = build_ydt1363_frame("20", "02", "46", "63", "", req, sizeof(req));
         size_t olen = handle_pylontech_request(req, rlen, bank, out, sizeof(out));
         assert(olen > 0 && verify_ydt_checksum(out, olen));
+        size_t olen61 = handle_pylontech_request("~200246610000FDAB\r", 18, bank, out, sizeof(out));
+        assert(olen61 > 18 && verify_ydt_checksum(out, olen61));
+        char hex61[128];
+        size_t hlen61 = olen61 - 18;
+        assert(hlen61 < sizeof(hex61));
+        std::memcpy(hex61, out + 13, hlen61);
+        hex61[hlen61] = '\0';
+        auto info61 = from_hex(hex61);
+        assert(info61.size() == 49);
+        assert(((info61[13] << 8) | info61[14]) == 101); // Max Cell: Pack 1 Cell 1 -> ID:1(1)
+        assert(((info61[17] << 8) | info61[18]) == 103); // Min Cell: Pack 1 Cell 3 -> ID:1(3)
+        assert(((info61[23] << 8) | info61[24]) == 101); // Temp pos: Pack 1 Cell 1 -> ID:1(1)
 
         // 6a. Leading TX->RX turnaround glitch bytes prepended to 140-byte TLV frame still parse cleanly
         uint8_t glitch_tlv[2 + sizeof(tlv_140b)];
@@ -420,7 +436,9 @@ int main() {
             packs[i].core.dvl = 46.0f;
             packs[i].ext.cell_count = 15;
             packs[i].ext.min_cell_mv = static_cast<uint16_t>(3325 + i);
+            packs[i].ext.min_cell_idx = static_cast<uint8_t>(4 + i);
             packs[i].ext.max_cell_mv = static_cast<uint16_t>(3335 + i);
+            packs[i].ext.max_cell_idx = static_cast<uint8_t>(15 - i);
             packs[i].ext.soh = 100.0f;
             packs[i].ext.rem_cap_ah = packs[i].core.soc;
         }
@@ -431,6 +449,11 @@ int main() {
         pol.charge_cap = 90.0f;
         pol.discharge_cap = 150.0f;
 
+        BankExt bank2{};
+        assert(aggregate_bank(packs, 2, 6000, pol, bank2));
+        assert(bank2.min_cell_pack == 1 && bank2.min_cell_idx == 4);
+        assert(bank2.max_cell_pack == 2 && bank2.max_cell_idx == 14);
+
         BankExt bank3{};
         assert(aggregate_bank(packs, 3, 6000, pol, bank3));
         assert(bank3.pack_count == 3);
@@ -440,12 +463,26 @@ int main() {
         assert(std::fabs(bank3.core.ccl - 90.0f) < 0.01f);
         assert(std::fabs(bank3.core.dcl - 150.0f) < 0.01f);
         assert(bank3.min_cell_mv == 3325 && bank3.max_cell_mv == 3337);
+        assert(bank3.min_cell_pack == 1 && bank3.min_cell_idx == 4);
+        assert(bank3.max_cell_pack == 3 && bank3.max_cell_idx == 13);
 
         char out[400];
         size_t olen60 = handle_pylontech_request("~200246600000FDAC\r", 18, bank3, out, sizeof(out));
         assert(olen60 > 0 && verify_ydt_checksum(out, olen60));
         assert(std::strncmp(out, "~2002460040A2", 13) == 0);
         assert(std::strstr(out, "42343831303042323130544537303033") != nullptr);
+
+        size_t olen61 = handle_pylontech_request("~200246610000FDAB\r", 18, bank3, out, sizeof(out));
+        assert(olen61 > 18 && verify_ydt_checksum(out, olen61));
+        char hex61_3[128];
+        size_t hlen61_3 = olen61 - 18;
+        assert(hlen61_3 < sizeof(hex61_3));
+        std::memcpy(hex61_3, out + 13, hlen61_3);
+        hex61_3[hlen61_3] = '\0';
+        auto info61_3 = from_hex(hex61_3);
+        assert(info61_3.size() == 49);
+        assert(((info61_3[13] << 8) | info61_3[14]) == 313); // Max Cell: Pack 3 Cell 13 -> ID:3(13)
+        assert(((info61_3[17] << 8) | info61_3[18]) == 104); // Min Cell: Pack 1 Cell 4  -> ID:1(4)
 
         // Fail-closed: Pack #3 delta-V > 1.0V must invalidate whole bank
         packs[2].core.bus_v = 51.5f;

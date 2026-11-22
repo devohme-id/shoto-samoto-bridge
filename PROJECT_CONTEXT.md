@@ -1,9 +1,9 @@
 # PROJECT CONTEXT: Shoto SmartLi / SD-BA430 ↔ Samoto ILS3600 / IHF6200 BMS Bridge
 
 > **Jenis Dokumen:** Konteks Global & *Single Source of Truth* Proyek (untuk pengembangan jangka panjang & sinkronisasi antar-sesi).  
-> **Baseline Codebase:** Git Commit [`94f4dbd`](firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino) (`2026-11-22 07:58:53 +0700`)  
+> **Baseline Codebase:** Git Commit [`94f4dbd`](firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino) + patch Opsi A posisi sel `61H` (`2026-11-22`)  
 > **Tanggal Pembaruan Konteks:** `2026-11-22`  
-> **Status Proyek:** **1-Pack Bridge + Samoto ILS3600 Terverifikasi Live (Bebas `ALA 245` & `ALA 235`)** · **Cascade 2-Pack Sedang Validasi Fisik (Menunggu Endloop `120 Ω` + Reboot BMS Bersama)** · **IHF6200 Siap Common Config (Belum Uji Fisik)**.
+> **Status Proyek:** **1-Pack Bridge + Samoto `ILS3600` & `IHF6200` (`Menu 05 = PYL`) Terverifikasi Live (Bebas Fault, `err=0`)** · **Cloud Monitoring `solar.siseli.com` (`Solar Plug-RWB1-06`) Terverifikasi Live 1:1 (`61H/62H/63H`)** · **Cascade Multi-Pack Menunggu Endloop `120 Ω` + Reboot BMS Bersama**.
 
 ---
 
@@ -69,7 +69,7 @@ Bank **wajib masuk kondisi aman (`INHIBIT`: `CCL = 0.0 A`, `DCL = 0.0 A`)** apab
 |---|---|---|
 | **Common 1-Binary Firmware** | 1 firmware untuk Bench `1×`, `ILS3600` `2×`, `IHF6200` `3×`, dan ekspansi `4×` tanpa edit kode/upload ulang | **Tercapai di Firmware (`DYNAMIC_PACK_DISCOVERY = true`)** |
 | **Dinamis Hot-Plug / Hot-Unplug** | Tambah/lepas pack terdeteksi otomatis & men-skala `Ah/CCL/DCL/60H` tanpa glitch `SOC=0%` atau fault sesaat | **Tercapai + Fixed via `94f4dbd`** *(perlu uji fisik 2-pack)* |
-| **Bebas Fault Samoto** | Bebas `ALA 245` (BMS Comm Fault) & `ALA 235` (Low Voltage Fault) | **Terverifikasi Live di `ILS3600` (1-pack)** |
+| **Bebas Fault Samoto** | Bebas `ALA 245` (BMS Comm Fault) & `ALA 235` (Low Voltage Fault) | **Terverifikasi Live di `ILS3600` & `IHF6200` (`Menu 05 = PYL`, 1-pack)** |
 | **Operasi 24/7 Awet (15S LFP)** | `CVL 53.6 V` (3,573 V/sel), `DVL 46.0 V` (3,067 V/sel), `CCL 30 A/pack`, `DCL 50 A/pack` | **Aktif di `config.h`** |
 | **Observabilitas & Audit** | Log 15 sel + `dV` per-pack di Serial Monitor & ekspor `.log` + `.csv` via PC | **Aktif (`cells`, `celllog`, `esp-log --csv`)** |
 | **Instalasi Panel Jangka Panjang** | Transceiver RS485 terisolasi + commissioning 2/3-pack penuh di `ILS3600` & `IHF6200` | **Masuk Backlog (Tahap Lanjut)** |
@@ -116,52 +116,64 @@ Menurut **MOP Resmi Westindo (`reference/instalasi-baterai-lithium-shoto-sda10-4
 >   * Gejala teramati di log `batraw`: kedua unit sama-sama masih beralamat `addr=1` sehingga terjadi *ping-pong bus collision* (SOC bergantian `67.0%` vs `67.3%`, RX banjir `256B` saat polling `addr=4`, dan `ALA 245` muncul-hilang).
 >   * **Workaround Aman Sementara:** Cabut kabel RJ45 cascade antar-pack hingga Endloop `120 Ω` tersedia & kedua BMS di-reboot lewat tombol `RESET`. Kabel daya DC paralel 48 V tetap aman aktif karena tegangan kedua pack sudah seimbang (`~49.15 V`).
 
-### 3.3 Inverter Samoto: `ILS3600` (Terverifikasi Live) & `IHF6200` (Target Common)
-* **Pinout Port BMS Samoto (`ILS3600`, Terbukti via `data/samoto_pin12.log`):**
+### 3.3 Inverter Samoto: `ILS3600` & `IHF6200` (Keduanya Terverifikasi Live 1-Pack)
+* **Pinout Port BMS Samoto (`ILS3600` & `IHF6200`, Terbukti via `data/samoto_pin12.log` & `data/ihf6200_raw.log`):**
   * **Pin 2 (`Oranye`) → `XY-K485 #2 A(+)`**
   * **Pin 1 (`Putih-Oranye`) → `XY-K485 #2 B(-)`**
   * *(Kandidat awal Pin 5/3 pada `GUIDE-A-DIY.md` menghasilkan 0 byte pada `data/samoto_capture.log`.)*
 * **Parameter Serial & Pola Polling (`9600 8N1`):**
-  * Saat idle (`data/samoto_pin12.log`): Samoto bergantian mengirim **Pylontech V3.5 `60H`** (`~200246600000FDAC\r`, `~201246600000FDAB\r`) dan **Modbus RTU FC03** (`01 03 00 01 00 03 54 0B`).
-  * Saat handshake sukses (`data/esp32_debug.log`): loop periodik **~200 ms** berurutan **`62H` → `63H` → `61H`** dengan header `~200246...`.
-* **Pengaturan Menu Inverter Samoto (Dari Foto Manual Produk User):**
-  * **Menu `23 BRU` (Bat low off restart vol):** `52.0 V` (rentang `48.0~56.0 V`)
-  * **Menu `24 BTT` (Battery type):** **`USER`** (*Customer Customization*) — tetap `USER` bersama `BnS = On`
-  * **Menu `25 BnS` (BMS Function Switch):** **`On`**
-  * **Menu `26 BSU` (Bat Soc Under Lock):** default `10%` (disarankan `15%`, rentang `5~50%`)
-  * **Menu `27 STG` (Bat Soc Turn To Ac):** `20%` (rentang `5~50%`)
-  * **Menu `28 STB` (Bat Soc Turn To Dc):** `95%` (rentang `50~100%`)
-  * **Menu `29 BSR` (Bat Restart Soc):** `50%` (rentang `30~100%`)
-  * **Menu `30 LOU` (Low voltage alarm):** `44.0 V` (margin aman `2.0 V` di bawah `DVL = 46.0 V`)
-  * **Menu `31 BPO` (Lithium battery protocol type):** **`0`** (default)
-* **Catatan Kesenjangan (`Gap`):** **Unit fisik `Samoto IHF6200` belum diuji langsung.** Saat pertama kali memindahkan bridge ke `IHF6200`, wajib verifikasi pinout port BMS (`Pin 2/1` vs kandidat lain bila perlu via `capture`) dan indeks Menu `31 BPO`.
+  * **ILS3600:** Saat idle (`data/samoto_pin12.log`) bergantian mengirim **Pylontech V3.5 `60H`** (`~200246600000FDAC\r`, `~201246600000FDAB\r`) dan **Modbus RTU FC03** (`01 03 00 01 00 03 54 0B`); saat aktif ([`data/esp32_debug.log`](data/esp32_debug.log)) menjalankan loop **`62H` → `63H` → `61H`**.
+  * **IHF6200 (`data/ihf6200_raw.log`):**
+    * Saat **Menu `05 = LIA`** (sebelum dipindah ke `PYL`): mengulang scan `~200246610000FDAB`, `~201246610000FDAA`, `01 03 00 13 00 09 74 09`, `01 03 00 01 00 03 54 0B`; tidak pernah meminta `62H`/`63H`, dan di `solar.siseli.com` tampil `"Do Not Display BMS Details"`.
+    * Saat **Menu `05 = PYL`**: langsung mengunci penuh protokol Pylontech V3.5 dengan loop **`63H` → `61H` → `62H`** (~200 ms interval, `err=0`, bebas fault).
+* **Pengaturan Menu Inverter Samoto (Dari Foto Manual Produk Resmi User):**
+  * **Seri `ILS3600`:** `BTT (24)` = `USER`, `BnS (25)` = `On`, `BPO (31)` = `0`, `BRU (23)` = `52.0 V`, `BSU (26)` = `10%` (disarankan `15%`), `STG (27)` = `20%`, `STB (28)` = `95%`, `BSR (29)` = `50%`, `LOU (30)` = `44.0 V`.
+  * **Seri `IHF6200` (Hal. 20 Manual):** **Tidak ada menu terpisah `BnS` (`25`) dan `BPO` (`31`)** — ketiganya digabung pada **Menu `05` (`Tipe Baterai`)**: `AGn` (default), `FLd`, `USE`, `LIA`, **`PYL` (Aktif & Terbukti)**, `t9F`, `GrO`, `FEL`, `LIb`, `LIC`. Memilih `PYL` otomatis mengatur program `24, 26, 27, dan 29` mengikuti BMS bridge.
+* **Monitoring Cloud `https://solar.siseli.com/` (`Solar Plug-RWB1-06` @ `IHF6200`, Terverifikasi Live `2026-11-22 21:58–22:01`):**
+  * **Identitas & Mode Inverter Teramati:** `Device Type = HPVINV02`, `Software Version = 40.09`, `Battery Type = PYL`, `Mode = Battery Mode`, `Status Code = 00`, `Working Mode = SBU`, `Charging Priority Order = OSO`.
+  * **Verifikasi 1:1 Data Live (`ESP32` `V=49.66V I=-4.65A SOC=73.3% T=36.0C CVL=53.60V DVL=46.00V CCL=45.0A DCL=80.0A` vs `solar.siseli.com` pasca upload Opsi A):**
+    * **`Display Mode`:** berubah dari `"Do Not Display BMS Details"` (`Menu 05 = LIA`) menjadi `"Display Data For 16 Battery Cells"` (`Menu 05 = PYL`).
+    * **Sel Min/Max & Posisi (`61H`):** `Max Voltage = 3323 mV` (`Max Voltage Cell Position = ID:1(1)`), `Min Voltage = 3304 mV` (`Min Voltage Cell Position = ID:1(6)`) pada capture `21:58` — mengonfirmasi format desimal **`pack_id * 100 + cell_num`** di [`bridge_protocols.hpp`](firmware/shoto_samoto_bridge/bridge_protocols.hpp) menggantikan `ID:2(57)`/`ID:2(64)`.
+    * **Telemetri & Polaritas Arus (`61H`):** `BMS Current SOC = 73 %` (`Battery Capacity = 74 %`), `BMS Charging Current = 0 A`, `BMS Discharge Current = 3.8 A` (selisih minor hanya berasal dari interval refresh dongle; tanda arah `-A` = discharge terbukti benar), `BMS Average Temperature = 35.95 °C` (vs ESP32 `36.0 °C`; selisih `0.05 °C` dari konversi offset `0.1 K` `2731` vs `2731.5`).
+    * **Limits & Enable (`63H`):** `BMS Charge Voltage Limit = 53.6 V`, `BMS Discharge Voltage Limit = 46 V`, `BMS Charge Current Limit = 45 A`, `BMS Allow Charging Flag = Yes`, `BMS Allow Discharge Flag = Yes`.
+    * **Komunikasi & Flag Proteksi (`62H`):** `BMS Communication Control Function = Open`, `BMS Communication Normal = Yes`, seluruh 6 flag BMS (`Charging Overcurrent`, `Discharge Overcurrent`, `Low Battery Alarm`, `Low Power Fault`, `Low Temperature`, `Temperature Too High`) = **`No`**, dan `Warning Light Status = Off` (0 false alarm).
+  * **Kondisi & Fakta Field `BMS Status` yang Masih Bernilai `0` di `solar.siseli.com`:**
+    * **Daftar Field Bernilai `0`:** Pada panel `BMS Status`, field `Remaining Capacity` (`0 A`), `Nominal Capacity` (`0 A`; satuan `"A"` adalah typo label UI Siseli untuk kapasitas Ah), dan seluruh **`Battery Voltage 1` s/d `Battery Voltage 16` (`0 mV`)** tetap bernilai `0` meskipun `Display Mode` sudah berubah ke `"Display Data For 16 Battery Cells"`.
+    * **Akar Masalah Terbukti (`data/ihf6200_raw.log`):**
+      1. Firmware ESP32 **sudah membaca ke-15 sel secara live** (tercetak di CLI `cells` / `[CELLS P1 ...]` dan `esp-log --csv`) serta **sudah mengimplementasikan responder Pylontech V3.3 `42H`** (yang memuat daftar tegangan tiap sel serta remaining/total capacity) di `bridge_protocols.hpp`.
+      2. Namun pada setting **`Menu 05 = PYL`**, firmware inverter `IHF6200` (`HPVINV02` v`40.09`) **hanya melakukan polling Pylontech V3.5 `63H -> 61H -> 62H`** dan **tidak pernah mengirim request `42H`** (maupun `60H`).
+      3. Frame V3.5 **`61H`** dalam spesifikasi Pylontech hanya membawa ringkasan bank (`V`, `I`, `SOC`, `T`, serta nilai & posisi sel Max/Min) dan **tidak memiliki payload array tegangan sel 1..16 maupun Remaining/Nominal Capacity (Ah)**. Akibatnya register internal kapasitas Ah dan tegangan per-sel 1..16 di inverter tetap `0` saat dibaca dongle `Solar Plug-RWB1-06` ke `solar.siseli.com`.
+      4. **Dampak Operasional:** Kondisi ini **bukan bug codebase ESP32** dan **tidak memengaruhi kontrol, limit proteksi, maupun keselamatan baterai** karena seluruh kontrol/telemetri utama (`61H/62H/63H`) berjalan 100%. Data 15 sel individual dan log CSV tetap dapat dipantau penuh lewat ESP32 Serial CLI (`cells`, `celllog`, `serial_lab.py esp-log --csv`). Apabila ingin mengecek apakah protokol lain pada `IHF6200` mem-poll `42H`, opsi eksperimen opsional adalah menguji singkat `Menu 05 = LIb` atau `LIC`.
+  * **Catatan Keamanan Parameter Fallback `IHF6200`:** Halaman parameter Siseli masih menampilkan setelan internal non-BMS/fallback (`Float Charging Voltage = 56.4 V`, `Strong Charging Voltage = 56.4 V`, `Battery Equalization Voltage = 56.3 V` dengan `Battery Equalization Mode = Disable`, `Maximum Total Charging Current = 120 A`). Selama `BMS Communication Normal = Yes`, inverter mengikuti `BMS Charge Voltage Limit = 53.6 V` dan `45 A`; namun **tetap wajib dicek 1× saat PV charging siang hari** bahwa `BMS Charging Current > 0 A`, arus dibatasi `<= 45 A`, dan tegangan berhenti di `<= 53.6 V` (tidak pernah naik ke `56.4 V` pada baterai 15S LFP).
 
 ### 3.4 Hardware Bridge & Alat Uji
 * **Board Aktif (Opsi A — `#define BOARD_DIY_XY_K485`):**
   * MCU: `ESP32 DevKit WROOM-32` (`BAT UART2`: TX=`GPIO17`, RX=`GPIO16`; `INV UART1`: TX=`GPIO26`, RX=`GPIO27`, DE=-1 auto-direction).
   * Transceiver: `2× XY-K485` dicatu **pin `3V3`** ESP32 via pin-splitter/breadboard (modul **non-isolated**, aman untuk bench dengan adaptor `5 V 2 A` floating; untuk panel permanen 24/7 direkomendasikan upgrade ke `2× Waveshare TTL TO RS485 (C)` terisolasi).
+  * **Catatan Boot-Loop SPI Flash (`startup.c:328`):** Bila Serial Monitor memunculkan `assert failed: do_core_init startup.c:328 (flash_ret == ESP_OK)`, pastikan **Tools → Board** Arduino IDE diset ke **`ESP32 Dev Module`** (bukan `ESP32-WROOM-DA Module`), Flash Mode `DIO`, `40MHz` (`Erase All Flash` 1x bila perlu), tidak ada koneksi yang menarik `GPIO12` HIGH saat boot, dan saat operasi berisiko noise EMI pisahkan dari USB laptop ke adaptor `5 V` floating.
 * **Opsi B Siap Kode (`#define BOARD_WAVESHARE_S3`):** `Waveshare ESP32-S3-RS485-CAN` (`BAT UART1`: TX=`17`, RX=`18`, DE=`21`; `INV UART2 SH1.0`: TX=`1`, RX=`2`).
 * **Alat Uji PC & macOS Notes:** `Autonics SCM-US48I` (2500 Vrms isolated RS485, chip FTDI). Pada mesin macOS user, port USB-A sempat tidak aktif hingga dilakukan *USB port mapping* via Hackintool/USBToolBox, setelah itu terdeteksi stabil sebagai `/dev/cu.usbserial-B002C8GU`.
 
 ---
 
-## 4. Apa yang Sudah Dibangun (Inventaris Codebase — Commit `94f4dbd`)
+## 4. Apa yang Sudah Dibangun (Inventaris Codebase — Commit `94f4dbd` + Patch Opsi A `61H`)
 
 ### 4.1 Peta File Repository
 | Path | Peran | Status |
 |---|---|---|
 | [`firmware/shoto_samoto_bridge/config.h`](firmware/shoto_samoto_bridge/config.h) | Konfigurasi board, protokol Shoto, parameter dynamic discovery & policy safety 24/7 | **Aktif & Updated (`94f4dbd`)** |
 | [`firmware/shoto_samoto_bridge/safety_core.hpp`](firmware/shoto_samoto_bridge/safety_core.hpp) | Struktur `Pack`, `Policy`, `Bank`, fungsi `usable()` & `aggregate()` 2-pack fail-closed | **Aktif (C++11/17 portable)** |
-| [`firmware/shoto_samoto_bridge/bridge_protocols.hpp`](firmware/shoto_samoto_bridge/bridge_protocols.hpp) | 4 codec Shoto + `DynamicLimits`/`compute_dynamic_caps` + `aggregate_bank` (0..4 pack) + Pylontech V3.5/V3.3 | **Aktif & Updated (`fcf803c`)** |
+| [`firmware/shoto_samoto_bridge/bridge_protocols.hpp`](firmware/shoto_samoto_bridge/bridge_protocols.hpp) | 4 codec Shoto + `DynamicLimits`/`compute_dynamic_caps` + `aggregate_bank` (0..4 pack) + tracking posisi sel Min/Max riil (`61H`) + Pylontech V3.5/V3.3 | **Aktif & Updated (Opsi A)** |
 | [`firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino`](firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino) | Sketch ESP32 FreeRTOS dual-core, runtime discovery, hot-plug/unplug, `static_assert`, Serial CLI | **Aktif & Updated (`94f4dbd`)** |
 | [`firmware/shoto_samoto_bridge/platformio.ini`](firmware/shoto_samoto_bridge/platformio.ini) | Build targets `diy_esp32_wroom32` dan `waveshare_esp32s3` (`-std=gnu++17 -Wall -Wextra`) | **Aktif** |
 | [`firmware/*.yaml`](firmware/diy-reader-modbus-v12.yaml) | Template ESPHome opsional Home Assistant (`diy-*`, `waveshare-*`, `secrets.example.yaml`) | Opsional (Hanya read Shoto) |
 | [`tools/serial_lab.py`](tools/serial_lab.py) | CLI diagnosa PC (`probe`, `autodetect`, `capture`, `decode`, `esp-log --csv`) | **Aktif & Updated (`fcf803c`)** |
 | [`tests/safety_test.cpp`](tests/safety_test.cpp) | Host unit test 7 skenario inti `safety_core.hpp` | **Pass (C++11 & C++17)** |
-| [`tests/bridge_test.cpp`](tests/bridge_test.cpp) | Host unit test 8 suite (4 codec Shoto, V3.5/V3.3, live SD-BA430 140B, 3-pack IHF6200, dynamic 0..4 pack & mismatch) | **Pass (C++11 & C++17)** |
+| [`tests/bridge_test.cpp`](tests/bridge_test.cpp) | Host unit test 8 suite (4 codec Shoto, V3.5/V3.3, live SD-BA430 140B, 3-pack IHF6200, dynamic 0..4 pack & posisi sel `61H`) | **Pass (C++11 & C++17)** |
 | [`tests/test_serial_lab.py`](tests/test_serial_lab.py) | 11 Python unit test golden `.exe`, PDF V1.2, DOC V2.8, capture live `ILS3600` & `esp-log` | **Pass (11/11 OK)** |
 | [`data/samoto_pin12.log`](data/samoto_pin12.log) | Capture JSONL asli port BMS Samoto `ILS3600` (Pin 1/2 @ `9600 8N1`, 70 baris) | Bukti Lapangan |
-| [`data/esp32_debug.log`](data/esp32_debug.log) | Capture Serial Monitor ESP32 live handshake Samoto `62H/63H/61H` (184 baris) | Bukti Lapangan |
+| [`data/esp32_debug.log`](data/esp32_debug.log) | Capture Serial Monitor ESP32 live handshake `ILS3600` `62H/63H/61H` (184 baris) | Bukti Lapangan |
+| [`data/ihf6200_raw.log`](data/ihf6200_raw.log) | Capture Serial Monitor ESP32 live `IHF6200` (`Menu 05 = PYL`, loop `63H/61H/62H`, 177 baris) | Bukti Lapangan |
 | [`diagrams/*`](diagrams/shoto-cascade.svg) & [`GUIDE*.md`](GUIDE-A-DIY.md) | Panduan A/B, versi print `GUIDE-A-DIY-PRINT.pdf`, dan diagram wiring PNG/SVG | **Perlu Sinkronisasi (Lihat Bagian 5)** |
 | [`reference/`](reference/instalasi-baterai-lithium-shoto-sda10-48100_compress.pdf) | Binary RE `.exe`, PDF `Modbus V1.2`, DOC `V2.8`, log `*.xls`, MOP PDF Westindo `SDA10-48100` | Arsip Rujukan Resmi |
 
@@ -183,7 +195,7 @@ Konfigurasi aktif di [`firmware/shoto_samoto_bridge/config.h`](firmware/shoto_sa
 
 ### 4.3 Daftar Protokol & Perintah CLI
 * **Protokol Baterai (Auto & Eksplisit):** `PROTO_MODBUS_V12` (`0x0FFF..0x1025` + `ba430_shifted`), `PROTO_TBD_BINARY` (Format A 86/88B + Format B TLV 140B `7E..0D`), `PROTO_TBD_1363` (`~26004642...`), `PROTO_SMARTLI_DCDC` (`0x0000` & `0x1030`).
-* **Protokol Inverter (Pylontech RS485):** **V3.5** `60H` (nama `"Force_L"`, manufaktur `"Pylon"`, `1..4` barcode `B48100B210TE7001..4`), `61H` (49B system analog), `62H` (alarm/protection), `63H` (9B management limits `CVL/DVL/CCL/DCL` + enable byte `0xC0`/`0x80`/`0x40`/`0x00`); **V3.3** `42H`, `44H`, `47H`, `4FH`, `51H`, `92H`. Memantulkan `VER` dan `ADR` inverter secara adaptif.
+* **Protokol Inverter (Pylontech RS485):** **V3.5** `60H` (nama `"Force_L"`, manufaktur `"Pylon"`, `1..4` barcode `B48100B210TE7001..4`), `61H` (49B system analog, posisi sel Max/Min & suhu dikodekan desimal `pack_id * 100 + cell_num` agar Samoto/Siseli menampilkan `ID:<pack>(<cell>)` mis. `ID:1(1..15)`), `62H` (alarm/protection), `63H` (9B management limits `CVL/DVL/CCL/DCL` + enable byte `0xC0`/`0x80`/`0x40`/`0x00`); **V3.3** `42H`, `44H`, `47H`, `4FH`, `51H`, `92H`. Memantulkan `VER` dan `ADR` inverter secara adaptif.
 * **Serial CLI ESP32 (`115200 baud`, Newline):**
   * `status` — ringkasan protokol, mode, validitas bank, metrik bank, & status slot `#1..#4` (`ONLINE`/`OFFLINE`, `age`, `prot`, `fault`).
   * `packs` — status cepat `DynDiscovery`, jumlah pack aktif, kapasitas, limit `CCL/DCL`, `miss` counter, & tegangan per slot `#1..#4`.
@@ -198,7 +210,7 @@ Konfigurasi aktif di [`firmware/shoto_samoto_bridge/config.h`](firmware/shoto_sa
 
 ## 5. Apa yang Akan Dibangun (Roadmap, Backlog & *Known Gaps*)
 
-### Prioritas 1 — Validasi Live 2-Pack Cascade (`Pack #1` + `Pack #2` @ `ILS3600`)
+### Prioritas 1 — Validasi Live 2-Pack Cascade (`Pack #1` + `Pack #2`)
 * [ ] Pasang **Plug Endloop `120 Ω` (`Pin 7 Putih-Coklat ↔ Pin 8 Coklat`, Pin 1–6 kosong)** pada **`Shoto #2 RS485B`**.
 * [ ] Sambungkan `XY-K485 #1 → #1 RS485A`, cascade straight 8-pin `#1 RS485B ↔ #2 RS485A`, dan Endloop di `#2 RS485B`.
 * [ ] Lakukan **reboot bersama kedua BMS** (tahan tombol `RESET` `5–10 detik` OFF → `3–5 detik` ON), lalu verifikasi di Serial CLI (`rescan`, `packs`, `cells`, `batraw`) bahwa `Slot#1 (addr=1)` dan `Slot#2 (addr=2)` keduanya `ONLINE`, `Cap=200Ah`, `CCL=60A`, `DCL=100A`, `err` tidak bertambah, dan nol `ALA 245`.
@@ -207,11 +219,14 @@ Konfigurasi aktif di [`firmware/shoto_samoto_bridge/config.h`](firmware/shoto_sa
 ### Prioritas 2 — Sinkronisasi Dokumentasi & Diagram Terhadap Fakta Lapangan
 Dokumen panduan berikut dibuat sebelum uji fisik `SD-BA430` + `ILS3600` dan **harus diselaraskan** agar tidak menyesatkan:
 * [ ] Perbaiki [`diagrams/shoto-cascade.svg`](diagrams/shoto-cascade.svg) & `shoto-cascade.png` + diagram utama `diy-xy-k485.*`: tukar label arah **`RS485A` ↔ `RS485B`** (Reader ke `#1 RS485A`, Cascade `#1 RS485B ↔ #2 RS485A`, Endloop `120 Ω` di ujung `RS485B` sesuai MOP Westindo).
-* [ ] Perbarui [`diagrams/patchcord-xy-k485-samoto.*`](diagrams/patchcord-xy-k485-samoto.svg) dan teks pinout Samoto di [`GUIDE.md`](GUIDE.md), [`GUIDE-A-DIY.md`](GUIDE-A-DIY.md), [`GUIDE-B-WAVESHARE.md`](GUIDE-B-WAVESHARE.md): ganti kandidat `Pin 5/3` dengan pinout terbukti **`Pin 2 (Oranye) = A(+)` dan `Pin 1 (Putih-Oranye) = B(-)`**, serta perbarui Menu Samoto (`23 BRU`, `24 BTT=USER`, `25 BnS=On`, `26–31`).
+* [ ] Perbarui [`diagrams/patchcord-xy-k485-samoto.*`](diagrams/patchcord-xy-k485-samoto.svg) dan teks pinout Samoto di [`GUIDE.md`](GUIDE.md), [`GUIDE-A-DIY.md`](GUIDE-A-DIY.md), [`GUIDE-B-WAVESHARE.md`](GUIDE-B-WAVESHARE.md): ganti kandidat `Pin 5/3` dengan pinout terbukti **`Pin 2 (Oranye) = A(+)` dan `Pin 1 (Putih-Oranye) = B(-)`**, serta perbarui Menu Samoto (`ILS3600`: `23 BRU`, `24 BTT=USER`, `25 BnS=On`, `26–31`; `IHF6200`: `Menu 05 = PYL`).
 * [ ] Perbarui bagian firmware di `GUIDE*.md` & generate ulang [`GUIDE-A-DIY-PRINT.pdf`](GUIDE-A-DIY-PRINT.pdf) untuk mencerminkan `PROTO_TBD_BINARY` (SD-BA430), `DYNAMIC_PACK_DISCOVERY = true`, parameter `53.6V/46.0V` (`0.3C/0.5C`), serta perintah CLI baru (`packs`, `rescan`, `celllog`, `batraw`, `esp-log --csv`).
 
-### Prioritas 3 — Uji Fisik `Samoto IHF6200` + 3-Pack Cascade
-* [ ] Verifikasi fisik pinout port BMS `IHF6200` (`Pin 2/1` vs kandidat lain via `serial_lab.py capture`) dan indeks Menu `31 BPO`.
+### Prioritas 3 — `Samoto IHF6200`, Dashboard Siseli & 3-Pack Cascade
+* [x] Uji fisik 1-pack pada `Samoto IHF6200` dengan `Menu 05 = PYL` (pinout BMS `Pin 2/1` identik `ILS3600`; manual `IHF6200` hal. 20 tidak memiliki menu `BnS`/`BPO` terpisah): polling V3.5 `63H -> 61H -> 62H` terkunci (`err=0`), Siseli `Display Mode` berubah ke `"Display Data For 16 Battery Cells"`.
+* [x] Upload firmware revisi Opsi A ke ESP32 dan verifikasi live 1:1 di `https://solar.siseli.com/` (`Max/Min Voltage Cell Position` menampilkan `ID:1(1)` / `ID:1(6)`, serta `SOC`, `Discharge Current`, `Average Temperature`, `CVL 53.6V`, `DVL 46V`, `CCL 45A`, flag allow & 6 alarm `62H` 100% sinkron dengan Serial ESP32).
+* [ ] Verifikasi 1× saat **PV charging siang hari** di `IHF6200` + `solar.siseli.com`: pastikan `BMS Charging Current > 0 A`, arus charge tertahan `<= 45 A`, dan tegangan baterai berhenti di `<= 53.6 V` (tidak mengikuti parameter fallback `56.4 V`).
+* [ ] *(Opsional)* Eksperimen singkat `Menu 05 = LIb` / `LIC` pada `IHF6200` + rekam `serial_lab.py esp-log` jika ingin menguji apakah inverter polling `42H` (agar `Remaining/Nominal Capacity` & `Battery Voltage 1..16` di Siseli tidak bernilai `0`).
 * [ ] Uji cascade **3 pack Shoto** (`#1 RS485A ← Bridge`, `#1 RS485B ↔ #2 RS485A`, `#2 RS485B ↔ #3 RS485A`, `#3 RS485B ← Endloop 120 Ω`) → validasi auto-scale `300 Ah`, `CCL=90 A`, `DCL=150 A`, `60H` 3 barcode, dan uji beban tinggi bebas `ALA 245`/`ALA 235`.
 
 ### Prioritas 4 — Hardening Produksi 24/7 & Ekosistem
@@ -233,6 +248,8 @@ Dokumen panduan berikut dibuat sebelum uji fisik `SD-BA430` + `ILS3600` dan **ha
 | **6. `94f4dbd`** | `2026-11-22 07:58` | **Audit *Makesure* & Fix Glitch Hot-Unplug:** Ditemukan celah timing saat `PACK_OFFLINE_MISSES=3` + `POLICY_FRESHNESS_MS=6000` (miss ke-2 menembus 6 detik sebelum pack dicabut dianggap offline → kirim `SOC=0%` + fault sesaat). Diperbaiki menjadi `PACK_OFFLINE_MISSES=2`, `POLICY_FRESHNESS_MS=9000UL`, timeout `TBD_BINARY=500u`, dan ditambah compile-time `static_assert`. |
 | **7. Sesi Debug 3** | `2026-11-22 00:06–00:38` | • Konfirmasi mekanisme 1-arah & prosedur charge seimbang 1-per-1 sebelum paralel.<br>• Pembuatan step-by-step paralel Pack #2, disusul uji fisik user (`XY-K485 #1 RXD` mati, collision `SOC 67.0% vs 67.3%`, `RX 256B`, `ALA 245` kedap-kedip).<br>• Cross-check MOP resmi `reference/instalasi-baterai-lithium-shoto-sda10-48100_compress.pdf` (hal. 5, 6, 11) membuktikan **arah `RS485A` vs `RS485B` di `diagrams/shoto-cascade.svg` terbalik** serta Pack #2 belum mendapat **Endloop `120 Ω`** dan **reboot `RESET` bersama**. |
 | **8. Dokumen Ini** | `2026-11-22 08:05` | Pembuatan `PROJECT_CONTEXT.md` sebagai konteks global tunggal proyek. |
+| **9. Sesi Debug 4 & Opsi A (`IHF6200` + `Siseli`)** | `2026-11-22` | • Pemasangan 1-pack pada **Samoto `IHF6200` + dongle `Solar Plug-RWB1-06` (`solar.siseli.com`)**.<br>• Diagnosis & resolusi boot-loop `assert failed: do_core_init startup.c:328 (flash_ret == ESP_OK)` (`ESP32-WROOM-DA Module` vs `ESP32 Dev Module`, `DIO`/`40MHz`, `GPIO12`/EMI/`3V3`).<br>• Analisis [`data/ihf6200_raw.log`](data/ihf6200_raw.log) & foto manual `IHF6200` hal. 20: sebelumnya `Menu 05 = LIA` hanya scan `~20024661`/`~20124661` + Modbus (`Display Mode: Do Not Display BMS Details`); setelah `Menu 05 = PYL`, terkunci loop Pylontech V3.5 **`63H -> 61H -> 62H`** (`err=0`, `CVL 53.6V`, `DVL 46.0V`, `CCL 45A`, `DCL 80A`, status `0xC0`) dan Siseli berubah ke `"Display Data for 16 Battery Cells"` (`Remaining/Nominal Capacity` & `Battery Voltage 1..16` tetap `0` karena `05=PYL` tidak mem-poll `42H`).<br>• Penerapan **Opsi A**: pelacakan `min_cell_pack/idx` & `max_cell_pack/idx` di 5 decoder sel Shoto + `aggregate_bank()`, serta encoding desimal `pack_id * 100 + cell_num` pada frame `61H` (`bridge_protocols.hpp` & `tests/bridge_test.cpp`) menggantikan hardcode `0x0101`/`0x0108` (`ID:2(57)`/`ID:2(64)`). |
+| **10. Verifikasi Live `solar.siseli.com` (`IHF6200` + Opsi A)** | `2026-11-22 21:58–22:05` | • Upload Opsi A ke ESP32 diverifikasi live pada `solar.siseli.com` (`Device Type = HPVINV02`, `Software Version = 40.09`): `Max/Min Voltage Cell Position` kini akurat terbaca **`ID:1(1)` / `ID:1(6)`** (`3323`/`3304 mV`).<br>• Verifikasi silang 1:1 Serial Monitor ESP32 (`V=49.66V I=-4.65A SOC=73.3% T=36.0C CVL=53.60V DVL=46.00V CCL=45.0A DCL=80.0A`) vs Siseli (`BMS Current SOC = 73%`, `BMS Discharge Current = 3.8A`, `BMS Average Temperature = 35.95°C`, `CVL = 53.6V`, `DVL = 46V`, `CCL = 45A`, allow charge/discharge `Yes`, seluruh 6 flag proteksi `62H` = `No`).<br>• Dokumentasi resmi fakta & akar masalah field `Remaining Capacity = 0 A`, `Nominal Capacity = 0 A`, & `Battery Voltage 1..16 = 0 mV` (`IHF6200` pada `Menu 05 = PYL` hanya polling `63H/61H/62H` tanpa `42H`, bukan bug bridge), serta catatan verifikasi charging siang agar tetap terkunci di `<= 53.6V` / `<= 45A` dan tidak mengikuti fallback `56.4V`. |
 
 ---
 
@@ -254,7 +271,7 @@ g++ -std=gnu++17 -Wall -Wextra -Werror -Ifirmware/shoto_samoto_bridge tests/brid
 # 4. Pastikan bersih dari temporary binary (atau compile via Arduino IDE / pio run)
 rm -f /tmp/safety_11 /tmp/safety_17 /tmp/bridge_11 /tmp/bridge_17
 ```
-*(Hasil terverifikasi pada commit `94f4dbd`: Python `11/11 OK`, `safety_test` `7/7 PASS`, `bridge_test` `ALL 8 C++17 bridge protocol & safety suites PASS`, serta 4 varian build `.ino` IDF4/IDF5 Dynamic/Fixed lulus `-Wall -Wextra -Werror` dengan stub Arduino.)*
+*(Terakhir diverifikasi penuh pada baseline commit `94f4dbd` dan diperluas pada patch Opsi A posisi sel `61H` untuk memvalidasi `min_cell_pack/idx`, `max_cell_pack/idx`, serta encoding desimal frame `61H` pada Suite 6 & Suite 7.)*
 
 ### 7.2 *Hard Invariants* (Dilarang Dilanggar Saat Modifikasi Kode/Hardware)
 1. **Jangan kirim `16× 0xAA`** ketika protokol baterai sudah terkunci ke `PROTO_TBD_BINARY` atau bukan mode `PROTO_AUTO` (`SD-BA430` rusak responsnya jika diberi `0xAA`).
@@ -264,3 +281,4 @@ rm -f /tmp/safety_11 /tmp/safety_17 /tmp/bridge_11 /tmp/bridge_17
 5. **Pertahankan kompatibilitas C++11 (`IDF 4`) + C++17 (`IDF 5`) + `#undef min/max`** serta jangan menggunakan C++14 aggregate brace-init pada struct dengan default member initializer.
 6. **Pertahankan `static_assert` timing hot-unplug** di `shoto_samoto_bridge.ino` jika mengubah `PACK_OFFLINE_MISSES`, `POLL_INTERVAL_MS`, atau `POLICY_FRESHNESS_MS`.
 7. **Fisik DC & Cascade:** Selalu samakan tegangan antarbaterai (`< 0.5 V`) dengan MCB OFF sebelum menggabungkan kabel daya DC paralel; ikuti arah resmi MOP (`Reader → #1 RS485A`, `#1 RS485B ↔ #2 RS485A`, `Endloop 120 Ω → Pack Terakhir RS485B`) + reboot BMS lewat `RESET`.
+8. **Encoding Posisi Sel Pylontech `61H` (`Samoto/Siseli`):** Gunakan format desimal `pack_id * 100 + cell_num` (1-based) pada offset info `61H` (`13..14` untuk max cell, `17..18` untuk min cell) serta `temp_pos = 101u`; jangan kembalikan ke packing biner `0x01xx` karena `Samoto/Siseli` menafsirkannya sebagai `ID:2(57)`/`ID:2(64)`.
