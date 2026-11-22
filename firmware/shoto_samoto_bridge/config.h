@@ -35,7 +35,7 @@
   #define FIXED_PACK_COUNT       1
 #endif
 #define MAX_SUPPORTED_PACKS      4     // Slot alamat RS485 paralel maksimum (addr 1..4)
-#define PACK_OFFLINE_MISSES      3     // Unplug / offline terdeteksi setelah 3x gagal berturut-turut
+#define PACK_OFFLINE_MISSES      2     // Unplug / offline terdeteksi setelah 2x gagal berturut-turut (4 frame 0x7C/0x7E) sebelum freshness timeout
 #define DISCOVERY_INTERVAL_MS    5000UL // Interval probe 1 slot offline (round-robin) untuk hot-plug
 
 #define PACK1_ADDR       1    // SD-BA430 TBD_BINARY = 1 (untuk PROTO_AUTO memindai 1, 2, 38, 39, 61, 214 otomatis)
@@ -65,7 +65,7 @@
 #define POLICY_CCL_PER_PACK_A  30.0f   // 0.30C/pack saat >= 2 baterai paralel online -> dingin & awet
 #define POLICY_DCL_PER_PACK_A  50.0f   // 0.50C/pack saat >= 2 baterai paralel online
 #define POLICY_MAX_DELTA_V     1.0f    // Selisih tegangan maks antar baterai paralel (V)
-#define POLICY_FRESHNESS_MS    6000UL  // Jika baterai online tidak merespons > 6 detik -> INHIBIT (0A)
+#define POLICY_FRESHNESS_MS    9000UL  // > waktu miss + poll multi-pack (hot-unplug bebas glitch SOC=0%/fault), fail-closed bila macet > 9 detik
 #define POLL_INTERVAL_MS       1500UL  // Interval baca Shoto online setiap 1.5 detik
 #define AUTO_LOG_CELLS         true    // Tampilkan rincian tegangan 15 sel + dV tiap 5 detik di Serial Monitor
 

@@ -30,6 +30,9 @@ HardwareSerial BatSerial(BAT_UART_NUM);
 HardwareSerial InvSerial(INV_UART_NUM);
 
 static constexpr uint8_t MAX_PACKS = MAX_SUPPORTED_PACKS;
+static_assert(
+    POLICY_FRESHNESS_MS >= (PACK_OFFLINE_MISSES > 1 ? (PACK_OFFLINE_MISSES - 1) : 1) * (POLL_INTERVAL_MS + 2500UL),
+    "POLICY_FRESHNESS_MS terlalu mepet untuk hot-unplug bebas glitch");
 static SemaphoreHandle_t g_snap_mutex = nullptr;
 static PackState g_packs[MAX_PACKS];
 static bool g_pack_online[MAX_PACKS] = {false, false, false, false};
@@ -128,7 +131,7 @@ static bool poll_single_pack(
     }
     if (proto == PROTO_TBD_BINARY) {
         // SD-BA430 / BMS PLUS V1.634 responds immediately WITHOUT 0xAA prefix (0xAA breaks its parser!).
-        uint32_t w = (wait_override_ms > 0u) ? wait_override_ms : 650u;
+        uint32_t w = (wait_override_ms > 0u) ? wait_override_ms : 500u;
         for (uint8_t hdr : {uint8_t(0x7C), uint8_t(0x7E)}) {
             uint8_t tx[6];
             build_tbd_binary_req(addr, hdr, 0x01, tx);

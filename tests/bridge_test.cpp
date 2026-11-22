@@ -491,6 +491,9 @@ int main() {
         for (int i = 0; i < 4; ++i) {
             packs[i].addr = static_cast<uint8_t>(i + 1);
             packs[i].core.complete = true;
+            packs[i].core.identity_verified = true;
+            packs[i].core.limits_verified = true;
+            packs[i].core.critical = false;
             packs[i].core.sampled_ms = 5000;
             packs[i].core.bus_v = 51.20f + 0.02f * static_cast<float>(i);
             packs[i].core.bus_a = 10.0f;
@@ -529,9 +532,12 @@ int main() {
             size_t olen60 = handle_pylontech_request("~200246600000FDAC\r", 18, bank, out, sizeof(out));
             assert(olen60 > 18 && verify_ydt_checksum(out, olen60));
             assert(out[olen60 - 1] == '\r');
-            // Barcodes count matches runtime pack_count (ADDR + '0'+count + count*32-byte ASCII barcodes)
+            // Barcodes count matches runtime pack_count (33B device header = 66 hex + n * 16B barcode = 32 hex)
             size_t data_hex_len = olen60 - 1 - 13 - 4;
-            assert(data_hex_len == 4u + n * 64u);
+            assert(data_hex_len == 66u + n * 32u);
+            if (n == 4) {
+                assert(std::strstr(out, "42343831303042323130544537303034") != nullptr);
+            }
         };
 
         // 1 -> 2 (ILS3600) -> 3 (IHF6200) -> 4 packs -> hot-unplug to 1 pack (slot #2)
@@ -564,11 +570,15 @@ int main() {
         assert(approx(mm_bank.core.ccl, 0.0f) && approx(mm_bank.core.dcl, 0.0f));
         char out_mm[256];
         size_t olen63 = handle_pylontech_request("~200246630000FDA9\r", 18, mm_bank, out_mm, sizeof(out_mm));
-        assert(olen63 > 0);
-        uint8_t info_mm[32]{};
-        size_t info_len = 0;
-        assert(decode_hex_info(out_mm, olen63, info_mm, sizeof(info_mm), info_len));
-        assert(info_len == 10 && info_mm[9] == 0x00); // Charge & Discharge inhibit flags
+        assert(olen63 > 18 && verify_ydt_checksum(out_mm, olen63));
+        char info_hex[64];
+        size_t hlen = olen63 - 18;
+        assert(hlen < sizeof(info_hex));
+        std::memcpy(info_hex, out_mm + 13, hlen);
+        info_hex[hlen] = '\0';
+        auto info_mm = from_hex(info_hex);
+        assert(info_mm.size() == 9 && info_mm[4] == 0x00 && info_mm[5] == 0x00 &&
+               info_mm[6] == 0x00 && info_mm[7] == 0x00 && info_mm[8] == 0x00); // Charge & Discharge inhibit (9B 63H payload)
     }
 
     std::cout << "ALL 8 C++17 bridge protocol & safety suites PASS\n";
