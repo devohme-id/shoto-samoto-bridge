@@ -618,6 +618,191 @@ int main() {
                info_mm[6] == 0x00 && info_mm[7] == 0x00 && info_mm[8] == 0x00); // Charge & Discharge inhibit (9B 63H payload)
     }
 
-    std::cout << "ALL 8 C++17 bridge protocol & safety suites PASS\n";
+    // 9) Read-only TBD protection & alarm parameter decoders (TianBangda baohucs / gaojcs_read)
+    {
+        auto build_param_resp = [](uint8_t addr, uint8_t cmd, const std::vector<uint8_t>& payload) {
+            std::vector<uint8_t> f;
+            f.push_back(0x7E);
+            f.push_back(addr);
+            f.push_back(cmd);
+            f.push_back(static_cast<uint8_t>(payload.size()));
+            f.insert(f.end(), payload.begin(), payload.end());
+            f.push_back(tbd_checksum(f.data(), f.size()));
+            f.push_back(0x0D);
+            return f;
+        };
+
+        // 10-byte (plen=4): [0x2E, 0x01, hi, lo] for cmd=0x2E (43.20V=4320), cmd=0x2F (48.00V=4800), cmd=0x35 (56.00V=5600)
+        auto f_cut = build_param_resp(1, 0x2E, {0x2E, 0x01, 0x10, 0xE0});
+        auto f_rec = build_param_resp(1, 0x2F, {0x2F, 0x01, 0x12, 0xC0});
+        auto f_chg = build_param_resp(1, 0x35, {0x35, 0x01, 0x15, 0xE0});
+        auto f_short = build_param_resp(1, 0x32, {0x0C, 0x4E}); // 8-byte (plen=2): 3150 mV
+        uint16_t v_cut = 0, v_rec = 0, v_chg = 0, v_short = 0;
+        assert(parse_tbd_param_u16(f_cut.data(), f_cut.size(), 1, 0x2E, v_cut) && v_cut == 4320u);
+        assert(parse_tbd_param_u16(f_rec.data(), f_rec.size(), 1, 0x2F, v_rec) && v_rec == 4800u);
+        assert(parse_tbd_param_u16(f_chg.data(), f_chg.size(), 1, 0x35, v_chg) && v_chg == 5600u);
+        assert(parse_tbd_param_u16(f_short.data(), f_short.size(), 1, 0x32, v_short) && v_short == 3150u);
+
+        auto f_bad = f_cut;
+        f_bad[f_bad.size() - 2] ^= 0x55u;
+        assert(!parse_tbd_param_u16(f_bad.data(), f_bad.size(), 1, 0x2E, v_cut));
+
+        // cmd=0x43 alarm parameter table (4 bytes per record: tag, pad, hi, lo)
+        std::vector<uint8_t> p43;
+        auto add_tag = [&](uint8_t tag, uint16_t val) {
+            p43.push_back(tag);
+            p43.push_back(0x01);
+            p43.push_back(static_cast<uint8_t>((val >> 8) & 0xFFu));
+            p43.push_back(static_cast<uint8_t>(val & 0xFFu));
+        };
+        add_tag(0x00, 3650u);
+        add_tag(0x02, 3350u);
+        add_tag(0x03, 2650u);
+        add_tag(0x05, 2900u);
+        add_tag(0x06, 5700u);
+        add_tag(0x08, 5460u);
+        add_tag(0x09, 4600u);
+        add_tag(0x0B, 5120u);
+        add_tag(0x21, 30u);
+        add_tag(0x22, 40u);
+        add_tag(0x23, 800u);
+        add_tag(0x24, 500u);
+        auto f43 = build_param_resp(1, 0x43, p43);
+        TbdAlarmParams ap{};
+        assert(parse_tbd_alarm_params_43(f43.data(), f43.size(), 1, ap));
+        assert(ap.valid && ap.tag_count == 12u);
+        assert(ap.cell_ov_alarm_mv == 3650u && ap.cell_ov_alarm_rec_mv == 3350u);
+        assert(ap.cell_uv_alarm_mv == 2650u && ap.cell_uv_alarm_rec_mv == 2900u);
+        assert(ap.pack_ov_alarm_cv == 5700u && ap.pack_ov_alarm_rec_cv == 5460u);
+        assert(ap.pack_uv_alarm_cv == 4600u && ap.pack_uv_alarm_rec_cv == 5120u);
+        assert(ap.low_soc_alarm_pct == 30u && ap.low_soc_alarm_rec_pct == 40u);
+        assert(ap.cell_diff_alarm_mv == 800u && ap.cell_diff_alarm_rec_mv == 500u);
+
+        auto f43_bad = f43;
+        f43_bad[f43_bad.size() - 2] ^= 0xFFu;
+        TbdAlarmParams ap_bad{};
+        assert(!parse_tbd_alarm_params_43(f43_bad.data(), f43_bad.size(), 1, ap_bad) && !ap_bad.valid);
+    }
+
+    // 10) Bank-level CCL/DCL caps (IHF6200 90A/120A) + 63H frame + InhibitReason classifier
+    {
+        auto approx = [](float a, float b) { return std::fabs(a - b) < 0.01f; };
+        DynamicLimits dl_cap;
+        dl_cap.ccl_1pack_a = 45.0f;
+        dl_cap.dcl_1pack_a = 80.0f;
+        dl_cap.ccl_per_pack_a = 30.0f;
+        dl_cap.dcl_per_pack_a = 50.0f;
+        dl_cap.ccl_max_a = 90.0f;
+        dl_cap.dcl_max_a = 120.0f;
+
+        float ccl = -1.0f, dcl = -1.0f;
+        compute_dynamic_caps(0, dl_cap, ccl, dcl);
+        assert(approx(ccl, 0.0f) && approx(dcl, 0.0f));
+        compute_dynamic_caps(1, dl_cap, ccl, dcl);
+        assert(approx(ccl, 45.0f) && approx(dcl, 80.0f));
+        compute_dynamic_caps(2, dl_cap, ccl, dcl);
+        assert(approx(ccl, 60.0f) && approx(dcl, 100.0f));
+        compute_dynamic_caps(3, dl_cap, ccl, dcl);
+        assert(approx(ccl, 90.0f) && approx(dcl, 120.0f));
+        compute_dynamic_caps(4, dl_cap, ccl, dcl);
+        assert(approx(ccl, 90.0f) && approx(dcl, 120.0f));
+
+        DynamicLimits dl_uncapped;
+        dl_uncapped.ccl_1pack_a = 45.0f;
+        dl_uncapped.dcl_1pack_a = 80.0f;
+        dl_uncapped.ccl_per_pack_a = 30.0f;
+        dl_uncapped.dcl_per_pack_a = 50.0f;
+        compute_dynamic_caps(3, dl_uncapped, ccl, dcl);
+        assert(approx(ccl, 90.0f) && approx(dcl, 150.0f));
+        compute_dynamic_caps(4, dl_uncapped, ccl, dcl);
+        assert(approx(ccl, 120.0f) && approx(dcl, 200.0f));
+
+        PackState packs[3]{};
+        for (int i = 0; i < 3; ++i) {
+            packs[i].addr = static_cast<uint8_t>(i + 1);
+            packs[i].core.complete = true;
+            packs[i].core.identity_verified = true;
+            packs[i].core.limits_verified = true;
+            packs[i].core.allow_charge = true;
+            packs[i].core.allow_discharge = true;
+            packs[i].core.critical = false;
+            packs[i].core.sampled_ms = 5000;
+            packs[i].core.bus_v = 49.80f + 0.02f * static_cast<float>(i);
+            packs[i].core.capacity_ah = 100.0f;
+            packs[i].core.soc = 80.0f;
+            packs[i].core.bus_a = -3.0f;
+            packs[i].core.ccl = 120.0f;
+            packs[i].core.dcl = 200.0f;
+            packs[i].core.cvl = 53.6f;
+            packs[i].core.dvl = 46.0f;
+            packs[i].ext.cell_count = 15;
+            packs[i].ext.min_cell_mv = 3315;
+            packs[i].ext.max_cell_mv = 3325;
+            packs[i].ext.soh = 99.0f;
+        }
+        Policy pol;
+        pol.approved = true;
+        pol.freshness_ms = 9000;
+        pol.max_delta_v = 1.0f;
+        compute_dynamic_caps(3, dl_cap, pol.charge_cap, pol.discharge_cap);
+
+        BankExt b3{};
+        float dv = -1.0f;
+        uint32_t age = 999999u;
+        assert(aggregate_bank(packs, 3, 6000, pol, b3));
+        assert(classify_bank_inhibit(packs, 3, 6000, pol, &dv, &age) == INHIBIT_NONE);
+        assert(approx(dv, 0.04f) && age == 1000u);
+        assert(approx(b3.core.ccl, 90.0f) && approx(b3.core.dcl, 120.0f));
+
+        char out63[256];
+        size_t o63 = handle_pylontech_request("~200246630000FDA9\r", 18, b3, out63, sizeof(out63));
+        assert(o63 > 18 && verify_ydt_checksum(out63, o63));
+        assert(std::strstr(out63, "D160B3B0038404B0C0") != nullptr); // 53.6V, 46.0V, 90.0A, 120.0A, 0xC0
+
+        // Classify all 8 InhibitReason cases + 1:1 agreement with aggregate_bank()
+        assert(std::strcmp(inhibit_reason_name(INHIBIT_NONE), "NONE") == 0);
+        assert(classify_bank_inhibit(packs, 0, 6000, pol, &dv, &age) == INHIBIT_NO_PACKS);
+        assert(approx(dv, 0.0f) && age == 0u);
+        assert(std::strcmp(inhibit_reason_name(INHIBIT_NO_PACKS), "NO_PACKS") == 0);
+
+        Policy pol_bad = pol;
+        pol_bad.approved = false;
+        assert(classify_bank_inhibit(packs, 3, 6000, pol_bad) == INHIBIT_POLICY);
+        assert(!aggregate_bank(packs, 3, 6000, pol_bad, b3));
+        assert(std::strcmp(inhibit_reason_name(INHIBIT_POLICY), "POLICY") == 0);
+
+        PackState p_crit[3] = {packs[0], packs[1], packs[2]};
+        p_crit[1].core.critical = true;
+        assert(classify_bank_inhibit(p_crit, 3, 6000, pol) == INHIBIT_CRITICAL);
+        assert(!aggregate_bank(p_crit, 3, 6000, pol, b3));
+        assert(std::strcmp(inhibit_reason_name(INHIBIT_CRITICAL), "CRITICAL") == 0);
+
+        assert(classify_bank_inhibit(packs, 3, 15001, pol, &dv, &age) == INHIBIT_STALE);
+        assert(age == 10001u);
+        assert(!aggregate_bank(packs, 3, 15001, pol, b3));
+        assert(std::strcmp(inhibit_reason_name(INHIBIT_STALE), "STALE") == 0);
+
+        PackState p_inc[3] = {packs[0], packs[1], packs[2]};
+        p_inc[2].core.complete = false;
+        assert(classify_bank_inhibit(p_inc, 3, 6000, pol) == INHIBIT_INCOMPLETE);
+        assert(!aggregate_bank(p_inc, 3, 6000, pol, b3));
+        assert(std::strcmp(inhibit_reason_name(INHIBIT_INCOMPLETE), "INCOMPLETE") == 0);
+
+        PackState p_cross[2] = {packs[0], packs[1]};
+        p_cross[0].core.cvl = 50.0f; p_cross[0].core.dvl = 46.0f;
+        p_cross[1].core.cvl = 53.6f; p_cross[1].core.dvl = 51.0f;
+        assert(classify_bank_inhibit(p_cross, 2, 6000, pol) == INHIBIT_LIMITS);
+        assert(!aggregate_bank(p_cross, 2, 6000, pol, b3));
+        assert(std::strcmp(inhibit_reason_name(INHIBIT_LIMITS), "LIMITS") == 0);
+
+        PackState p_dv[3] = {packs[0], packs[1], packs[2]};
+        p_dv[2].core.bus_v = 51.20f; // delta_v = 51.20 - 49.80 = 1.40V > 1.0V
+        assert(classify_bank_inhibit(p_dv, 3, 6000, pol, &dv, &age) == INHIBIT_DELTA_V);
+        assert(approx(dv, 1.40f));
+        assert(!aggregate_bank(p_dv, 3, 6000, pol, b3));
+        assert(std::strcmp(inhibit_reason_name(INHIBIT_DELTA_V), "DELTA_V") == 0);
+    }
+
+    std::cout << "ALL 10 C++17 bridge protocol & safety suites PASS\n";
     return 0;
 }

@@ -55,8 +55,8 @@
 //    0 pack -> INHIBIT (0A / 0A)
 //    1 pack -> CCL 45A (0.45C), DCL 80A (0.80C)  [bench / uji meja]
 //    2 pack -> CCL 60A (30A/pack), DCL 100A (50A/pack) [ILS3600 24/7]
-//    3 pack -> CCL 90A (30A/pack), DCL 150A (50A/pack) [IHF6200 24/7]
-//    4 pack -> CCL 120A (30A/pack), DCL 200A (50A/pack) [ekspansi 4 pack]
+//    3 pack -> CCL 90A, DCL 120A (capped) [IHF6200 24/7]
+//    4 pack -> CCL 90A, DCL 120A (capped) [ekspansi 4 pack]
 #define POLICY_USER_APPROVED   true
 #define POLICY_CVL_MAX_V       53.6f   // 15S LFP sweet spot 24/7 (3.573 V/sel) -> awet & minim stress
 #define POLICY_DVL_MIN_V       46.0f   // 3.067 V/sel -> batas cut-off discharge aman 15S LFP
@@ -64,6 +64,8 @@
 #define POLICY_DCL_1PACK_A     80.0f   // 0.80C saat hanya 1x 100Ah online
 #define POLICY_CCL_PER_PACK_A  30.0f   // 0.30C/pack saat >= 2 baterai paralel online -> dingin & awet
 #define POLICY_DCL_PER_PACK_A  50.0f   // 0.50C/pack saat >= 2 baterai paralel online
+#define POLICY_CCL_BANK_MAX_A  90.0f   // Plafon arus charge bank (aman 24/7 untuk IHF6200 & 3-4 pack)
+#define POLICY_DCL_BANK_MAX_A  120.0f  // Plafon arus discharge bank (sesuai rating IHF6200 6.2kW / 120A; hindari 150A/200A di 63H)
 #define POLICY_MAX_DELTA_V     1.0f    // Selisih tegangan maks antar baterai paralel (V)
 #define POLICY_FRESHNESS_MS    9000UL  // > waktu miss + poll multi-pack (hot-unplug bebas glitch SOC=0%/fault), fail-closed bila macet > 9 detik
 #define POLL_INTERVAL_MS       1500UL  // Interval baca Shoto online setiap 1.5 detik

@@ -643,10 +643,14 @@ def esp_log(args):
             csv_f.flush()
 
         start = time.monotonic()
-        query_delay = min(2.2, max(0.0, args.seconds * 0.25))
+        params_mode = bool(getattr(args, "params", False))
+        if params_mode:
+            ensure_raw = False
+        query_delay = min(1.5, max(0.0, args.seconds * 0.15)) if params_mode else min(2.2, max(0.0, args.seconds * 0.25))
         sent_queries = False
         saw_raw = False
         toggled_raw = False
+        param_done_at = None
         with open(out_path, "w", encoding="utf-8") as f:
             while (time.monotonic() - start) < args.seconds:
                 elapsed = time.monotonic() - start
@@ -656,6 +660,10 @@ def esp_log(args):
                     time.sleep(0.15)
                     s.write(b"cells\n")
                     s.flush()
+                    if params_mode:
+                        time.sleep(0.15)
+                        s.write(b"params\n")
+                        s.flush()
                     sent_queries = True
 
                 raw_line = s.readline()
@@ -667,6 +675,9 @@ def esp_log(args):
                     f.flush()
                     print(line, flush=True)
                     count += 1
+
+                    if params_mode and "[PARAM DONE]" in text and param_done_at is None:
+                        param_done_at = time.monotonic()
 
                     bm = bat_re.search(text)
                     if bm:
@@ -698,6 +709,8 @@ def esp_log(args):
                     s.write(b"raw\n")
                     s.flush()
                     toggled_raw = True
+                if params_mode and param_done_at is not None and (time.monotonic() - param_done_at) >= 0.5:
+                    break
     finally:
         if csv_f:
             csv_f.close()
@@ -745,6 +758,7 @@ def main():
     q.add_argument("--seconds", type=int, default=15)
     q.add_argument("--out", default="data/esp32_debug.log")
     q.add_argument("--csv", default=None, help="Optional CSV output path for per-cell telemetry")
+    q.add_argument("--params", action="store_true", help="Send 'params' command to audit Shoto BMS EEPROM parameters to --out")
     q.add_argument("--no-raw", action="store_true", help="Do not auto-enable raw INV logging")
     q.set_defaults(fn=esp_log)
 

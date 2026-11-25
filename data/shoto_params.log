@@ -1,0 +1,54 @@
+[22:09:48.199] ets Jul 29 2019 12:21:46
+[22:09:48.200] 
+[22:09:48.205] rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+[22:09:48.208] configsip: 0, SPIWP:0xee
+[22:09:48.213] clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+[22:09:48.216] mode:DIO, clock div:2
+[22:09:48.219] load:0x3fff0030,len:1184
+[22:09:48.221] load:0x40078000,len:13232
+[22:09:48.222] load:0x40080400,len:3028
+[22:09:48.225] entry 0x400805e4
+[22:09:48.771] 
+[22:09:48.774] === SHOTO <-> SAMOTO BMS BRIDGE v3.0 ===
+[22:09:48.782] Mode=ACTIVE | PolicyApproved=YES | Proto=TBD_BINARY | DynDiscovery=ON | MaxPacks=4 | FixedPacks=1
+[22:09:48.786] Ketik 'help' untuk perintah diagnosa.
+[22:09:49.014] [PACK+] Pack#1 (addr=1) ONLINE V=49.75V SOC=82.0%
+[22:09:50.125] Proto=TBD_BINARY | Bridge=ACTIVE | PolicyApproved=YES | DynDiscovery=ON | Packs=0/4 | BankValid=INHIBIT
+[22:09:50.126] Bank: V=0.00V I=0.00A SOC=0.0% (rawSOC=0.0%) SOH=0.0% CVL=0.00V DVL=0.00V CCL=0.0A DCL=0.0A | ok=1 err=0 minC=0mV maxC=0mV
+[22:09:50.127]   Pack#1 (addr=1) [ONLINE]: age=835ms V=49.75V I=-4.62A SOC=82.0% prot=000000 fault=0000
+[22:09:50.128]   Pack#2 (addr=2) [OFFLINE]
+[22:09:50.128]   Pack#3 (addr=3) [OFFLINE]
+[22:09:50.129]   Pack#4 (addr=4) [OFFLINE]
+[22:09:50.130] [CELLS P1 addr=1 n=15 min=3305mV max=3320mV dV=15mV] C01=3305 C02=3320 C03=3320 C04=3320 C05=3319 C06=3320 C07=3319 C08=3309 C09=3320 C10=3311 C11=3319 C12=3318 C13=3317 C14=3319 C15=3317
+[22:09:50.158] [PARAM] Audit parameter read-only Shoto dijadwalkan pada siklus Core 0 berikutnya...
+[22:09:51.146] [SCALE] active=1 cap_target=100Ah CCL_lim=45.0A DCL_lim=80.0A bank=YES (CCL=45.0A DCL=80.0A)
+[22:09:51.150] [PARAM START addr=1 proto=TBD_BINARY]
+[22:09:51.249] [PARAM TBD_PROT addr=1 cmd=0x06 name=cell_ov_prot_v ok=YES raw=3700 val=3.700V rx=10B hex=7E 01 06 04 00 00 0E 74 0C 0D]
+[22:09:51.407] [PARAM TBD_PROT addr=1 cmd=0x07 name=cell_ov_rec_v ok=YES raw=3550 val=3.550V rx=10B hex=7E 01 07 04 00 00 0D DE DA 0D]
+[22:09:51.531] [PARAM TBD_PROT addr=1 cmd=0x09 name=cell_uv_prot_v ok=YES raw=2000 val=2.000V rx=10B hex=7E 01 09 04 00 00 07 D0 C6 0D]
+[22:09:51.651] [PARAM TBD_PROT addr=1 cmd=0x0A name=cell_uv_rec_v ok=YES raw=3200 val=3.200V rx=10B hex=7E 01 0A 04 00 00 0C 80 E4 0D]
+[22:09:51.772] [PARAM TBD_PROT addr=1 cmd=0x2A name=pack_ov_prot_v ok=YES raw=5700 val=57.000V rx=10B hex=7E 01 2A 04 00 00 16 44 04 0D]
+[22:09:51.895] [PARAM TBD_PROT addr=1 cmd=0x2B name=pack_ov_rec_v ok=YES raw=5010 val=50.100V rx=10B hex=7E 01 2B 04 00 00 13 92 82 0D]
+[22:09:52.015] [PARAM TBD_PROT addr=1 cmd=0x2E name=pack_uv_prot_v ok=YES raw=4000 val=40.000V rx=10B hex=7E 01 2E 04 00 00 0F A0 9A 0D]
+[22:09:52.135] [PARAM TBD_PROT addr=1 cmd=0x2F name=pack_uv_rec_v ok=YES raw=4800 val=48.000V rx=10B hex=7E 01 2F 04 00 00 12 C0 02 0D]
+[22:09:52.277] [PARAM TBD_PROT addr=1 cmd=0x35 name=const_chg_v ok=YES raw=5200 val=52.000V rx=10B hex=7E 01 35 04 00 00 14 50 16 0D]
+[22:09:52.400] [PARAM TBD_PROT addr=1 cmd=0x2D name=const_chg_i ok=YES raw=5000 val=50.000A_or_raw rx=10B hex=7E 01 2D 04 00 00 13 88 86 0D]
+[22:09:52.519] [PARAM TBD_PROT addr=1 cmd=0x32 name=cell_sleep_v ok=YES raw=3500 val=3.500V rx=10B hex=7E 01 32 04 00 00 0D AC 86 0D]
+[22:09:52.637] [PARAM TBD_PROT addr=1 cmd=0x3E name=uv_off_interval ok=YES raw=0 val=0.000raw rx=10B hex=7E 01 3E 04 00 00 00 00 84 0D]
+[22:09:52.759] [PARAM TBD_PROT addr=1 cmd=0x50 name=sleep_time ok=YES raw=1440 val=1440.000min rx=10B hex=7E 01 50 04 00 00 05 A0 F6 0D]
+[22:09:53.092] [PARAM TBD_ALARM_43_RAW rx=178B] 7E 01 43 AC 00 02 0E 74 01 02 0B B8 02 02 0E 42 03 02 09 C4 04 02 0B B8 05 02 0C 80 06 02 15 18 07 02 0B B8 08 02 14 82 09 02 10 68 0A 02 0B B8 0B 02 12 C0 0C 02 29 04 0D 02 0B B8 0E 02 27 10 0F 02 29 04 10 02 0B B8 11 02 27 10 12 02 00 6E 13 02 0B B8 14 02 00 69 15 02 00 2D 16 02 0B B8 17 02 00 2F 18 02 00 87 19 02 0B B8 1A 02 00 82 1B 02 00 1E 1C 02 0B B8 1D 02 00 23 1E 02 00 A0 1F 02 0B B8 20 02 00 96 21 02 00 14 22 02 00 19 23 02 03 E8 24 02 01 F4 25 02 00 73 26 02 0B B8 27 02 00 6E 28 02 00 1E 29 02 0B B8 2A 02 00 20 66 0D
+[22:09:53.108] [PARAM TBD_ALARM_43 tags=43 cell_ov=3.700V/3.650V cell_uv=2.500V/3.200V pack_ov=54.00V/52.50V pack_uv_low_alarm=42.00V/48.00V low_soc_alarm=20%/25% cell_dv=1000mV/500mV]
+[22:09:53.471] [PARAM MODBUS_V12 addr=214 ok=NO rx=0B regs=0 shifted=NO r34_max_i=0 r37_float_v=0.00V r38_boost_v=0.00V hex=]
+[22:09:53.861] [PARAM MODBUS_V12 addr=1 ok=NO rx=0B regs=0 shifted=NO r34_max_i=0 r37_float_v=0.00V r38_boost_v=0.00V hex=]
+[22:09:54.253] [PARAM YDT1363_47H rx=0B]
+[22:09:54.255] [PARAM SUMMARY]
+[22:09:54.267] [PARAM MAP 1 Low_battery_alarm] Shoto_EEPROM=42.00V(rec 48.00V)/SOC=20%(rec 25%) | Bridge_DVL=46.00V | Bridge_62H_PackUV=43.00V_CellUV=2.800V
+[22:09:54.280] [PARAM MAP 2 BMS_Lock_machine_battery_capacity] Shoto_EEPROM=N/A(inverter_side) | Inverter_ILS3600=Menu26_BSU | Inverter_IHF6200=BMS_Low_Power_SOC
+[22:09:54.289] [PARAM MAP 3 battery_recharge_voltage] Shoto_EEPROM_UV_recovery=48.00V | Inverter_side=LBU_BackToGrid
+[22:09:54.300] [PARAM MAP 4 paralel_shutdown_battery] Shoto_EEPROM=N/A(per_pack_MOS_antitheft_only) | Inverter_side=Parallel_Mode_Turn_Off_Voltage_SOC
+[22:09:54.311] [PARAM MAP 5 battery_cut_off_voltage] Shoto_EEPROM_PackUV=40.00V CellUV=2.000V(x15) | Bridge_DVL_63H=46.00V
+[22:09:54.319] [PARAM MAP 6 battery_constant_charging_voltage] Shoto_EEPROM_cmd35=52.00V | Bridge_CVL_63H=53.60V
+[22:09:54.330] [PARAM MAP 7 battery_float_charging_voltage] Shoto_EEPROM=N/A(TBD_only_has_cmd35;Modbus_shifted_no_r1024) | Bridge_CVL_63H=53.60V
+[22:09:54.330] [PARAM DONE]
+[22:09:54.344] [BAT TBD_BINARY] packs=1 valid=YES V=49.75V I=-4.62A SOC=82.0% T=34.6C CCL=45.0A DCL=80.0A ok=1 err=0 age=5316ms | INV rx=21 tx=12 bytes=378
+[22:09:54.360] [CELLS P1 addr=1 n=15 min=3305mV max=3320mV dV=15mV] C01=3305 C02=3320 C03=3320 C04=3320 C05=3319 C06=3320 C07=3319 C08=3309 C09=3320 C10=3311 C11=3319 C12=3318 C13=3317 C14=3319 C15=3317

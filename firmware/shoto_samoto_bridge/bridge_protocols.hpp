@@ -38,6 +38,8 @@ struct DynamicLimits {
     float dcl_1pack_a = 80.0f;
     float ccl_per_pack_a = 30.0f;
     float dcl_per_pack_a = 50.0f;
+    float ccl_max_a = 0.0f; // 0 = uncapped
+    float dcl_max_a = 0.0f; // 0 = uncapped
 };
 
 inline void compute_dynamic_caps(
@@ -54,11 +56,13 @@ inline void compute_dynamic_caps(
     if (online_packs == 1u) {
         ccl_out = non_neg(dl.ccl_1pack_a);
         dcl_out = non_neg(dl.dcl_1pack_a);
-        return;
+    } else {
+        float n = static_cast<float>(online_packs);
+        ccl_out = non_neg(dl.ccl_per_pack_a) * n;
+        dcl_out = non_neg(dl.dcl_per_pack_a) * n;
     }
-    float n = static_cast<float>(online_packs);
-    ccl_out = non_neg(dl.ccl_per_pack_a) * n;
-    dcl_out = non_neg(dl.dcl_per_pack_a) * n;
+    if (finite(dl.ccl_max_a) && dl.ccl_max_a > 0.0f) ccl_out = std::min(ccl_out, dl.ccl_max_a);
+    if (finite(dl.dcl_max_a) && dl.dcl_max_a > 0.0f) dcl_out = std::min(dcl_out, dl.dcl_max_a);
 }
 
 struct TelemetryExt {
@@ -559,6 +563,92 @@ inline bool parse_tbd_binary_resp(
     return false;
 }
 
+// -------------------- 2b. TianBangda Read-Only Parameter Decoders (EXE RE) --------------------
+
+struct TbdAlarmParams {
+    bool valid = false;
+    uint8_t tag_count = 0;
+    uint16_t cell_ov_alarm_mv = 0;
+    uint16_t cell_ov_alarm_rec_mv = 0;
+    uint16_t cell_uv_alarm_mv = 0;
+    uint16_t cell_uv_alarm_rec_mv = 0;
+    uint16_t pack_ov_alarm_cv = 0;
+    uint16_t pack_ov_alarm_rec_cv = 0;
+    uint16_t pack_uv_alarm_cv = 0;
+    uint16_t pack_uv_alarm_rec_cv = 0;
+    uint16_t low_soc_alarm_pct = 0;
+    uint16_t low_soc_alarm_rec_pct = 0;
+    uint16_t cell_diff_alarm_mv = 0;
+    uint16_t cell_diff_alarm_rec_mv = 0;
+};
+
+// Verified from TianBangda V1.1.634-26.exe Form1::baohucs: payload uint16 value at rx[6..7] (or rx[4..5] if plen==2).
+inline bool parse_tbd_param_u16(
+    const uint8_t* rx, size_t len, uint8_t expected_addr, uint8_t expected_cmd, uint16_t& val_out)
+{
+    for (size_t start = 0; start + 8u <= len; ++start) {
+        if ((rx[start] != 0x7E && rx[start] != 0x7C) ||
+            rx[start + 1] != expected_addr ||
+            rx[start + 2] != expected_cmd) {
+            continue;
+        }
+        const uint8_t* f = rx + start;
+        uint8_t plen = f[3];
+        if (plen < 2u) continue;
+        size_t flen = static_cast<size_t>(4u + plen + 2u);
+        if (start + flen > len || f[flen - 1] != 0x0D) continue;
+        if (f[flen - 2] != tbd_checksum(f, flen - 2)) continue;
+        val_out = (plen >= 4u) ? be_u16(f + 6u) : be_u16(f + 4u);
+        return true;
+    }
+    return false;
+}
+
+// Verified from TianBangda V1.1.634-26.exe Form1::gaojcs_read (cmd 0x43): 4-byte records [tag, len/pad, hi, lo].
+inline bool parse_tbd_alarm_params_43(
+    const uint8_t* rx, size_t len, uint8_t expected_addr, TbdAlarmParams& out)
+{
+    out = TbdAlarmParams{};
+    for (size_t start = 0; start + 10u <= len; ++start) {
+        if ((rx[start] != 0x7E && rx[start] != 0x7C) ||
+            rx[start + 1] != expected_addr ||
+            rx[start + 2] != 0x43) {
+            continue;
+        }
+        const uint8_t* f = rx + start;
+        uint8_t plen = f[3];
+        if (plen < 4u) continue;
+        size_t flen = static_cast<size_t>(4u + plen + 2u);
+        if (start + flen > len || f[flen - 1] != 0x0D) continue;
+        if (f[flen - 2] != tbd_checksum(f, flen - 2)) continue;
+
+        size_t end = static_cast<size_t>(4u + plen);
+        for (size_t pos = 4u; pos + 4u <= end; pos += 4u) {
+            uint8_t tag = f[pos];
+            uint16_t v = be_u16(f + pos + 2u);
+            out.tag_count++;
+            switch (tag) {
+                case 0x00: out.cell_ov_alarm_mv = v; break;
+                case 0x02: out.cell_ov_alarm_rec_mv = v; break;
+                case 0x03: out.cell_uv_alarm_mv = v; break;
+                case 0x05: out.cell_uv_alarm_rec_mv = v; break;
+                case 0x06: out.pack_ov_alarm_cv = v; break;
+                case 0x08: out.pack_ov_alarm_rec_cv = v; break;
+                case 0x09: out.pack_uv_alarm_cv = v; break;
+                case 0x0B: out.pack_uv_alarm_rec_cv = v; break;
+                case 0x21: out.low_soc_alarm_pct = v; break;
+                case 0x22: out.low_soc_alarm_rec_pct = v; break;
+                case 0x23: out.cell_diff_alarm_mv = v; break;
+                case 0x24: out.cell_diff_alarm_rec_mv = v; break;
+                default: break;
+            }
+        }
+        out.valid = (out.tag_count > 0u);
+        return out.valid;
+    }
+    return false;
+}
+
 // -------------------- 3. TianBangda YD/T 1363.3 ASCII (DOC V2.8) --------------------
 
 inline size_t build_ydt1363_frame(
@@ -770,6 +860,75 @@ inline bool parse_smartli_dcdc_block(
 }
 
 // -------------------- Bank Aggregation + Safety Gate --------------------
+
+enum InhibitReason : uint8_t {
+    INHIBIT_NONE = 0,
+    INHIBIT_NO_PACKS = 1,
+    INHIBIT_POLICY = 2,
+    INHIBIT_STALE = 3,
+    INHIBIT_CRITICAL = 4,
+    INHIBIT_INCOMPLETE = 5,
+    INHIBIT_LIMITS = 6,
+    INHIBIT_DELTA_V = 7
+};
+
+inline const char* inhibit_reason_name(InhibitReason r) {
+    switch (r) {
+        case INHIBIT_NONE:       return "NONE";
+        case INHIBIT_NO_PACKS:   return "NO_PACKS";
+        case INHIBIT_POLICY:     return "POLICY";
+        case INHIBIT_STALE:      return "STALE";
+        case INHIBIT_CRITICAL:   return "CRITICAL";
+        case INHIBIT_INCOMPLETE: return "INCOMPLETE";
+        case INHIBIT_LIMITS:     return "LIMITS";
+        case INHIBIT_DELTA_V:    return "DELTA_V";
+        default:                 return "UNKNOWN";
+    }
+}
+
+inline InhibitReason classify_bank_inhibit(
+    const PackState* packs, size_t count, uint32_t now_ms, const Policy& pol,
+    float* delta_v_out = nullptr, uint32_t* max_age_out = nullptr)
+{
+    if (delta_v_out) *delta_v_out = 0.0f;
+    if (max_age_out) *max_age_out = 0u;
+    size_t n = std::min<size_t>(count, 4u);
+    if (n == 0u) return INHIBIT_NO_PACKS;
+
+    float min_v = 999.0f, max_v = -999.0f;
+    float cvl_lim = 1e6f, dvl_lim = 0.0f;
+    uint32_t max_age = 0u;
+    bool any_critical = false, any_stale = false, any_unusable = false;
+
+    for (size_t i = 0; i < n; ++i) {
+        const PackState& p = packs[i];
+        uint32_t age = uint32_t(now_ms - p.core.sampled_ms);
+        if (age > max_age) max_age = age;
+        if (p.core.critical) any_critical = true;
+        if (age > pol.freshness_ms) any_stale = true;
+        if (!usable(p.core, now_ms, pol)) any_unusable = true;
+        min_v = std::min(min_v, p.core.bus_v);
+        max_v = std::max(max_v, p.core.bus_v);
+        cvl_lim = std::min(cvl_lim, p.core.cvl);
+        dvl_lim = std::max(dvl_lim, p.core.dvl);
+    }
+
+    if (delta_v_out) *delta_v_out = (n >= 2u && finite(max_v) && finite(min_v)) ? (max_v - min_v) : 0.0f;
+    if (max_age_out) *max_age_out = max_age;
+
+    if (!pol.approved ||
+        !finite(pol.charge_cap) || pol.charge_cap < 0.0f ||
+        !finite(pol.discharge_cap) || pol.discharge_cap < 0.0f ||
+        (n >= 2u && (!finite(pol.max_delta_v) || pol.max_delta_v <= 0.0f))) {
+        return INHIBIT_POLICY;
+    }
+    if (any_critical) return INHIBIT_CRITICAL;
+    if (any_stale) return INHIBIT_STALE;
+    if (any_unusable) return INHIBIT_INCOMPLETE;
+    if (!(cvl_lim > dvl_lim)) return INHIBIT_LIMITS;
+    if (n >= 2u && (max_v - min_v) > pol.max_delta_v) return INHIBIT_DELTA_V;
+    return INHIBIT_NONE;
+}
 
 inline bool aggregate_bank(
     const PackState* packs, size_t count, uint32_t now_ms, const Policy& pol, BankExt& out)

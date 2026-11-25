@@ -263,6 +263,50 @@ class TestLab(unittest.TestCase):
             self.assertIn(",3333,", csv_lines[1])
             self.assertIn("Saved 4 lines", buf.getvalue())
 
+    def test_esp_log_params_mode_captures_and_stops_on_done(self):
+        lines = [
+            b"[PARAM START addr=1 proto=TBD_BINARY]\n",
+            b"[PARAM TBD_PROT addr=1 cmd=0x2E name=pack_uv_prot_v ok=YES raw=4320 val=43.200V rx=10B hex=7E 01 2E 04 2E 01 10 E0 5A 0D]\n",
+            b"[PARAM TBD_ALARM_43 tags=12 cell_ov=3.650V/3.350V cell_uv=2.650V/2.900V pack_ov=57.00V/54.60V pack_uv_low_alarm=46.00V/51.20V low_soc_alarm=30%/40% cell_dv=800mV/500mV]\n",
+            b"[PARAM DONE]\n",
+            b"[BAT TBD_BINARY] extra line after wait\n",
+        ]
+        written = []
+        class FakeSer:
+            def open(self): pass
+            def close(self): pass
+            def flush(self): pass
+            def write(self, data): written.append(data)
+            def readline(self): return lines.pop(0) if lines else b""
+
+        fake_mod = types.SimpleNamespace(PARITY_NONE="N", Serial=lambda: FakeSer())
+        with tempfile.TemporaryDirectory() as td:
+            out_file = Path(td) / "shoto_params.log"
+            args = types.SimpleNamespace(
+                port="/dev/null", baud=115200, seconds=20.0, out=str(out_file),
+                csv=None, no_raw=False, params=True,
+            )
+            buf = io.StringIO()
+            clock = [0.0]
+            def fake_mono():
+                v = clock[0]
+                clock[0] += 0.3
+                return v
+            with mock.patch.dict(sys.modules, {"serial": fake_mod}), \
+                 mock.patch.object(serial_lab.time, "sleep"), \
+                 mock.patch.object(serial_lab.time, "monotonic", side_effect=fake_mono), \
+                 contextlib.redirect_stdout(buf):
+                esp_log(args)
+            content = out_file.read_text(encoding="utf-8")
+            self.assertLess(clock[0], 10.0)
+            self.assertIn("[PARAM START addr=1 proto=TBD_BINARY]", content)
+            self.assertIn("[PARAM TBD_PROT addr=1 cmd=0x2E", content)
+            self.assertIn("[PARAM DONE]", content)
+            self.assertIn(b"status\n", written)
+            self.assertIn(b"cells\n", written)
+            self.assertIn(b"params\n", written)
+            self.assertNotIn(b"raw\n", written)
+
 
 if __name__ == "__main__":
     unittest.main()

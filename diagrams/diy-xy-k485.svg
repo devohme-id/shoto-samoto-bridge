@@ -43,42 +43,42 @@
   <rect x="52" y="282" width="110" height="46" rx="6" fill="#1e293b" stroke="#64748b" stroke-width="1.5"/>
   <text x="107" y="302" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" font-weight="700" fill="#fca5a5" text-anchor="middle">+48V  |  -48V</text>
   <text x="107" y="320" font-family="DejaVu Sans, Arial, sans-serif" font-size="11" fill="#cbd5e1" text-anchor="middle">Terminal Daya DC</text>
-  <!-- RJ45 Ports on Shoto #1 -->
+  <!-- RJ45 Ports on Shoto #1 (MOP Resmi Westindo: RS485A -> Bridge, RS485B -> Cascade) -->
   <rect x="180" y="282" width="84" height="46" rx="5" fill="#0f172a" stroke="#38bdf8" stroke-width="1.5"/>
-  <text x="222" y="302" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" font-weight="700" fill="#38bdf8" text-anchor="middle">RS485A</text>
+  <text x="222" y="302" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" font-weight="700" fill="#38bdf8" text-anchor="middle">RS485B</text>
   <text x="222" y="318" font-family="DejaVu Sans, Arial, sans-serif" font-size="11" fill="#cbd5e1" text-anchor="middle">Cascade Out</text>
 
   <rect x="275" y="282" width="84" height="46" rx="5" fill="#0f172a" stroke="#10b981" stroke-width="1.5"/>
-  <text x="317" y="302" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" font-weight="700" fill="#34d399" text-anchor="middle">RS485B</text>
+  <text x="317" y="302" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" font-weight="700" fill="#34d399" text-anchor="middle">RS485A</text>
   <text x="317" y="318" font-family="DejaVu Sans, Arial, sans-serif" font-size="11" fill="#cbd5e1" text-anchor="middle">Ke Bridge</text>
 
-  <!-- Cascade cable #1 RS485A -> #2 RS485B -->
+  <!-- Cascade cable #1 RS485B -> #2 RS485A -->
   <polyline points="222,328 222,370 317,370 317,406" fill="none" stroke="#0284c7" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
   <rect x="120" y="356" width="232" height="24" rx="4" fill="#e0f2fe" stroke="#0284c7" stroke-width="1"/>
   <text x="236" y="373" font-family="DejaVu Sans, Arial, sans-serif" font-size="12" font-weight="700" fill="#0369a1" text-anchor="middle">Patch Cord Cat5e/6 Straight 8-pin</text>
 
   <!-- Shoto #2 -->
   <rect x="35" y="406" width="340" height="165" rx="12" fill="#273646" stroke="#111827" stroke-width="2"/>
-  <text x="55" y="438" font-family="DejaVu Sans, Arial, sans-serif" font-size="21" font-weight="700" fill="#ffffff">SHOTO SMART-LI #2</text>
-  <text x="55" y="462" font-family="DejaVu Sans, Arial, sans-serif" font-size="14" fill="#94a3b8">Paralel Pack #2 (Auto-Address tanpa DIP)</text>
+  <text x="55" y="438" font-family="DejaVu Sans, Arial, sans-serif" font-size="21" font-weight="700" fill="#ffffff">SHOTO SMART-LI #2..#4</text>
+  <text x="55" y="462" font-family="DejaVu Sans, Arial, sans-serif" font-size="14" fill="#94a3b8">Paralel Pack #2..#4 (Auto-Addr tanpa DIP)</text>
   <rect x="52" y="505" width="110" height="46" rx="6" fill="#1e293b" stroke="#64748b" stroke-width="1.5"/>
   <text x="107" y="525" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" font-weight="700" fill="#fca5a5" text-anchor="middle">+48V  |  -48V</text>
   <text x="107" y="543" font-family="DejaVu Sans, Arial, sans-serif" font-size="11" fill="#cbd5e1" text-anchor="middle">Paralel Busbar</text>
 
   <rect x="180" y="505" width="84" height="46" rx="5" fill="#0f172a" stroke="#f59e0b" stroke-width="1.5"/>
-  <text x="222" y="525" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" font-weight="700" fill="#fbbf24" text-anchor="middle">RS485A</text>
-  <text x="222" y="541" font-family="DejaVu Sans, Arial, sans-serif" font-size="11" fill="#cbd5e1" text-anchor="middle">Ke Terminator</text>
+  <text x="222" y="525" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" font-weight="700" fill="#fbbf24" text-anchor="middle">RS485B</text>
+  <text x="222" y="541" font-family="DejaVu Sans, Arial, sans-serif" font-size="11" fill="#cbd5e1" text-anchor="middle">Ke Endloop</text>
 
   <rect x="275" y="505" width="84" height="46" rx="5" fill="#0f172a" stroke="#38bdf8" stroke-width="1.5"/>
-  <text x="317" y="525" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" font-weight="700" fill="#38bdf8" text-anchor="middle">RS485B</text>
+  <text x="317" y="525" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" font-weight="700" fill="#38bdf8" text-anchor="middle">RS485A</text>
   <text x="317" y="541" font-family="DejaVu Sans, Arial, sans-serif" font-size="11" fill="#cbd5e1" text-anchor="middle">Dari Pack #1</text>
 
   <!-- Terminator -->
   <polyline points="222,551 222,606" fill="none" stroke="#b45309" stroke-width="5" stroke-linecap="round"/>
   <rect x="75" y="606" width="295" height="74" rx="8" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
-  <text x="222" y="631" font-family="DejaVu Sans, Arial, sans-serif" font-size="16" font-weight="700" fill="#92400e" text-anchor="middle">TERMINATOR CAN 120 Ω (A02)</text>
-  <text x="222" y="652" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" fill="#78350f" text-anchor="middle">Varian A: Resistor 120 Ω di Pin 7 ↔ Pin 8</text>
-  <text x="222" y="670" font-family="DejaVu Sans, Arial, sans-serif" font-size="12" fill="#92400e" text-anchor="middle">(Pin 1–6 tidak dihubungkan pada plug ini)</text>
+  <text x="222" y="631" font-family="DejaVu Sans, Arial, sans-serif" font-size="15.5" font-weight="700" fill="#92400e" text-anchor="middle">ENDLOOP CAN 120 Ω (PACK AKHIR)</text>
+  <text x="222" y="652" font-family="DejaVu Sans, Arial, sans-serif" font-size="12.5" fill="#78350f" text-anchor="middle">Resistor 120 Ω Pin 7 ↔ Pin 8 di RS485B akhir</text>
+  <text x="222" y="670" font-family="DejaVu Sans, Arial, sans-serif" font-size="11.5" fill="#92400e" text-anchor="middle">(Pin 1–6 kosong + reboot RESET bersama)</text>
 
   <!-- ==================== 2. XY-K485 #1 (BAT) ==================== -->
   <rect x="445" y="188" width="215" height="405" rx="12" fill="#155e75" stroke="#0e7490" stroke-width="2"/>
@@ -219,33 +219,33 @@
   <!-- ==================== 5. INVERTER SAMOTO ==================== -->
   <rect x="1425" y="178" width="340" height="415" rx="12" fill="#431407" stroke="#9a3412" stroke-width="2"/>
   <text x="1595" y="212" font-family="DejaVu Sans, Arial, sans-serif" font-size="21" font-weight="700" fill="#ffffff" text-anchor="middle">SAMOTO IHF6200 / ILS6300</text>
-  <text x="1595" y="236" font-family="DejaVu Sans, Arial, sans-serif" font-size="14" fill="#fed7aa" text-anchor="middle">Inverter Hybrid 48 VDC • LCD Menu 05 = PYL / LIB</text>
+  <text x="1595" y="236" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" fill="#fed7aa" text-anchor="middle">IHF6200: Menu 05 = PYL | ILS3600: 24=USER, 25=On</text>
 
   <!-- Samoto BMS Port -->
   <rect x="1445" y="258" width="300" height="135" rx="8" fill="#1c1917" stroke="#fb923c" stroke-width="1.5"/>
   <text x="1595" y="283" font-family="DejaVu Sans, Arial, sans-serif" font-size="15" font-weight="700" fill="#fdba74" text-anchor="middle">PORT BMS RJ45 (RS485)</text>
-  <text x="1465" y="310" font-family="DejaVu Sans, Arial, sans-serif" font-size="14" font-weight="700" fill="#4ade80">● Pin 5 (Putih-Biru) = RS485 A+ *</text>
-  <text x="1465" y="335" font-family="DejaVu Sans, Arial, sans-serif" font-size="14" font-weight="700" fill="#fb923c">● Pin 3 (Putih-Hijau) = RS485 B− *</text>
-  <text x="1465" y="360" font-family="DejaVu Sans, Arial, sans-serif" font-size="12" fill="#d6d3d1">(Alternatif card tertentu: Pin 7=A, Pin 8=B)</text>
-  <text x="1465" y="380" font-family="DejaVu Sans, Arial, sans-serif" font-size="12" font-weight="700" fill="#fde047">*Wajib uji tangkap SCM-US48I di Fase A03</text>
+  <text x="1465" y="310" font-family="DejaVu Sans, Arial, sans-serif" font-size="14" font-weight="700" fill="#4ade80">● Pin 2 (Oranye) = RS485 A+</text>
+  <text x="1465" y="335" font-family="DejaVu Sans, Arial, sans-serif" font-size="14" font-weight="700" fill="#fb923c">● Pin 1 (Putih-Oranye) = RS485 B−</text>
+  <text x="1465" y="360" font-family="DejaVu Sans, Arial, sans-serif" font-size="12" fill="#86efac">✓ TERVERIFIKASI LIVE: IHF6200 &amp; ILS3600</text>
+  <text x="1465" y="380" font-family="DejaVu Sans, Arial, sans-serif" font-size="12" fill="#d6d3d1">Pylontech V3.5/V3.3 @ 9600 8N1</text>
 
   <!-- Synced Parameters box -->
   <rect x="1445" y="410" width="300" height="106" rx="8" fill="#292524" stroke="#78716c" stroke-width="1.5"/>
   <text x="1595" y="434" font-family="DejaVu Sans, Arial, sans-serif" font-size="14" font-weight="700" fill="#ffffff" text-anchor="middle">PARAMETER TERSINKRON KE INVERTER</text>
   <text x="1462" y="458" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" fill="#e7e5e4">✓ SOC (%) &amp; SOH (%) Akurat</text>
   <text x="1462" y="479" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" fill="#e7e5e4">✓ Tegangan Pack, Arus (+/−), Suhu</text>
-  <text x="1462" y="500" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" fill="#e7e5e4">✓ Limit Dinamis (CVL/DVL/CCL/DCL)</text>
+  <text x="1462" y="500" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" fill="#e7e5e4">✓ Limit 24/7: CVL 53.6V DVL 46V DCL≤120A</text>
 
   <!-- Power Terminals inside Samoto -->
   <rect x="1445" y="530" width="300" height="46" rx="6" fill="#1c1917" stroke="#ef4444" stroke-width="1.5"/>
   <text x="1595" y="558" font-family="DejaVu Sans, Arial, sans-serif" font-size="14" font-weight="700" fill="#fca5a5" text-anchor="middle">Terminal Daya: BAT+ (48V)  |  BAT− (0V)</text>
 
-  <!-- Wires XY-K485 #2 A+/B- -> Samoto BMS Port -->
-  <polyline points="1195,216 1195,172 1405,172 1405,305 1445,305" fill="none" stroke="#16a34a" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="10 6"/>
-  <polyline points="1252,216 1252,186 1392,186 1392,330 1445,330" fill="none" stroke="#ea580c" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="10 6"/>
+  <!-- Wires XY-K485 #2 A+/B- -> Samoto BMS Port (Solid verified live) -->
+  <polyline points="1195,216 1195,172 1405,172 1405,305 1445,305" fill="none" stroke="#16a34a" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <polyline points="1252,216 1252,186 1392,186 1392,330 1445,330" fill="none" stroke="#ea580c" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
   <rect x="1364" y="218" width="56" height="46" rx="4" fill="#ffffff" stroke="#94a3b8" stroke-width="1"/>
-  <text x="1392" y="236" font-family="DejaVu Sans, Arial, sans-serif" font-size="11" font-weight="700" fill="#15803d" text-anchor="middle">Pin 5 A+</text>
-  <text x="1392" y="253" font-family="DejaVu Sans, Arial, sans-serif" font-size="11" font-weight="700" fill="#c2410c" text-anchor="middle">Pin 3 B−</text>
+  <text x="1392" y="236" font-family="DejaVu Sans, Arial, sans-serif" font-size="11" font-weight="700" fill="#15803d" text-anchor="middle">Pin 2 A+</text>
+  <text x="1392" y="253" font-family="DejaVu Sans, Arial, sans-serif" font-size="11" font-weight="700" fill="#c2410c" text-anchor="middle">Pin 1 B−</text>
 
   <!-- ==================== 4. JALUR DAYA 48V DC TERPISAH ==================== -->
   <rect x="35" y="724" width="1730" height="96" rx="10" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
@@ -290,8 +290,8 @@
 
   <rect x="655" y="886" width="205" height="92" rx="8" fill="#ffffff" stroke="#3b82f6" stroke-width="1.5"/>
   <text x="757" y="910" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" font-weight="700" fill="#1e3a8a" text-anchor="middle">Uji BERGANTIAN ke:</text>
-  <text x="757" y="933" font-family="DejaVu Sans, Arial, sans-serif" font-size="12" fill="#15803d" text-anchor="middle">1) Shoto RS485B (autodetect)</text>
-  <text x="757" y="953" font-family="DejaVu Sans, Arial, sans-serif" font-size="12" fill="#c2410c" text-anchor="middle">2) Samoto Port BMS (capture)</text>
+  <text x="757" y="933" font-family="DejaVu Sans, Arial, sans-serif" font-size="12" fill="#15803d" text-anchor="middle">1) Shoto RS485A (autodetect)</text>
+  <text x="757" y="953" font-family="DejaVu Sans, Arial, sans-serif" font-size="12" fill="#c2410c" text-anchor="middle">2) Samoto Port BMS (Pin 2/1)</text>
   <text x="757" y="971" font-family="DejaVu Sans, Arial, sans-serif" font-size="11" fill="#475569" text-anchor="middle">(Tanpa gabung ke XY-K485)</text>
 
   <!-- Right Card: Safety Rules & Upgrade -->
@@ -299,7 +299,7 @@
   <text x="924" y="868" font-family="DejaVu Sans, Arial, sans-serif" font-size="18" font-weight="700" fill="#92400e">ATURAN FAKTUAL NON-ISOLATED XY-K485 &amp; UPGRADE PANEL PERMANEN</text>
   <text x="924" y="896" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" fill="#451a03">1. Cek arah pin XY-K485: TXD/RXD antar pabrikan bisa berbeda. Ukur tegangan TTL idle &lt;= 3.3 V sebelum sambung ke ESP32.</text>
   <text x="924" y="921" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" fill="#451a03">2. XY-K485 tidak terisolasi: pakai adaptor 5 V 2 A floating; ukur beda GND vs referensi port (&lt; 2 V) sebelum sambung.</text>
-  <text x="924" y="946" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" fill="#451a03">3. Kabel putus-putus ke Samoto baru dipasang setelah Fase A03 (pinout &amp; protokol Samoto terbukti via SCM-US48I).</text>
+  <text x="924" y="946" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" fill="#451a03">3. Pinout Samoto &amp; Shoto sudah terverifikasi live (Samoto: Pin 2=A+/Pin 1=B−; Shoto: Pin 1=A+/Pin 2=B−).</text>
   <text x="924" y="971" font-family="DejaVu Sans, Arial, sans-serif" font-size="13" font-weight="700" fill="#9a3412">4. Upgrade Panel 24/7: ganti 2× XY-K485 → Waveshare TTL TO RS485 (C) (terisolasi); GPIO17/16 &amp; GPIO26/27 tetap sama.</text>
 
   <!-- ==================== 6. LEGEND STRIP ==================== -->
