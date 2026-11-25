@@ -675,12 +675,22 @@ class TestShotoAutomationsAndScripts(unittest.TestCase):
 
         # 7. Bridge offline / Inverter 63H stalled > 2 min
         stalled_auto = by_id["shoto_bms_bridge_or_inverter_stalled_alert"]
+        stalled_tr = stalled_auto.get("trigger", stalled_auto.get("triggers"))
+        stalled_by_id = {t.get("id"): t for t in stalled_tr if isinstance(t, dict)}
+        self.assertIn("bridge_offline", stalled_by_id)
+        self.assertIn("inv_63_stalled", stalled_by_id)
+        bridge_offline_tr = stalled_by_id["bridge_offline"]
+        self.assertEqual(bridge_offline_tr.get("entity_id"), "binary_sensor.shoto_ils6300_bank_valid")
+        self.assertEqual(bridge_offline_tr.get("to"), "unavailable")
+        self.assertEqual(parse_ha_duration_s(bridge_offline_tr.get("for")), 120)
+
         stalled_strings: list[str] = []
         collect_yaml_strings(stalled_auto, stalled_strings)
         stalled_joined = "\n".join(stalled_strings)
         self.assertIn("binary_sensor.shoto_ils6300_bank_valid", stalled_joined)
         self.assertIn("sensor.shoto_ils6300_diag_inv_63", stalled_joined)
         self.assertIn("unavailable", stalled_joined)
+        self.assertIn("> 120", stalled_joined)
 
         # 8. Maintenance unlock backup auto-relock <= 300s (5 minutes)
         relock_auto = by_id["shoto_bms_maint_unlock_auto_relock"]
@@ -758,8 +768,35 @@ class TestShotoAutomationsAndScripts(unittest.TestCase):
         audit_services = [s.get("service", s.get("action")) for s in audit_steps]
         self.assertIn("persistent_notification.create", audit_services)
         self.assertIn("notify.notify", audit_services)
-        for ns in [s for s in audit_steps if s.get("service", s.get("action")) == "notify.notify"]:
+        audit_notify_steps = [
+            s for s in audit_steps if s.get("service", s.get("action")) == "notify.notify"
+        ]
+        for ns in audit_notify_steps:
             self.assertIs(ns.get("continue_on_error"), True)
+            msg = ns.get("data", {}).get("message", "")
+            self.assertIn("namespace(parts=[])", msg)
+            self.assertIn("| join(', ')", msg)
+            self.assertNotIn("loop.last", msg)
+            try:
+                import jinja2  # type: ignore
+            except ImportError:
+                jinja2 = None
+            if jinja2 is not None:
+                # Render 2-pack online scenario (pack 3 & 4 offline) to ensure no trailing comma
+                env = jinja2.Environment()
+                rendered = env.from_string(msg).render(
+                    state_attr=lambda eid, key: (
+                        True if key == "valid" and eid.endswith(("pack1_eep_valid", "pack2_eep_valid"))
+                        else (3650 if key == "p_cov" else (2800 if key == "p_cuv" else None))
+                    ),
+                    is_state=lambda _eid, _val: False,
+                ).strip()
+                self.assertFalse(rendered.endswith(","), f"Trailing comma in rendered push message: {rendered!r}")
+                self.assertEqual(
+                    rendered,
+                    "Audit EEPROM read-only PLTS Samoto ILS6300 selesai. "
+                    "Pack#1=OK(CellOV=3650mV,CellUV=2800mV), Pack#2=OK(CellOV=3650mV,CellUV=2800mV)",
+                )
 
         # Ensure zero Shoto EEPROM write commands anywhere in automations/scripts
         raw_combined = (

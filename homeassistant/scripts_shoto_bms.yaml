@@ -62,14 +62,14 @@ shoto_audit_all_packs_and_notify:
             (3, 'binary_sensor.shoto_ils6300_pack3_eep_valid', 'binary_sensor.shoto_ils6300_pack3_online'),
             (4, 'binary_sensor.shoto_ils6300_pack4_eep_valid', 'binary_sensor.shoto_ils6300_pack4_online')
           ] %}
-          {% for idx, eid, online_eid in packs -%}
-          {% if state_attr(eid, 'valid') %}
+          {%- for idx, eid, online_eid in packs -%}
+          {%- if state_attr(eid, 'valid') %}
           Pack #{{ idx }} (Addr {{ state_attr(eid, 'addr') }}): Valid={{ state_attr(eid, 'valid') }}, ProtOK={{ state_attr(eid, 'p_ok') }}, AlarmOK={{ state_attr(eid, 'a_ok') }} ({{ state_attr(eid, 'tags') }} tags)
           - Proteksi: CellOV={{ state_attr(eid, 'p_cov') }}mV, CellUV={{ state_attr(eid, 'p_cuv') }}mV, PackOV={{ ((state_attr(eid, 'p_pov') | float(0)) / 100) | round(2) }}V, PackUV={{ ((state_attr(eid, 'p_puv') | float(0)) / 100) | round(2) }}V, CCV={{ ((state_attr(eid, 'p_ccv') | float(0)) / 100) | round(2) }}V
           - Alarm: CellOV={{ state_attr(eid, 'a_cov') }}mV, CellUV={{ state_attr(eid, 'a_cuv') }}mV, ChgOC={{ state_attr(eid, 'a_coc') }}cA, DsgOC={{ state_attr(eid, 'a_doc') }}cA, dV={{ state_attr(eid, 'a_cdv') }}mV, LowSOC={{ state_attr(eid, 'a_lsoc') }}%
-          {% elif idx <= 2 or is_state(online_eid, 'on') %}
+          {%- elif idx <= 2 or is_state(online_eid, 'on') %}
           Pack #{{ idx }}: Belum ada data audit EEPROM.
-          {% endif %}
+          {%- endif -%}
           {%- endfor %}
     - service: notify.notify
       continue_on_error: true
@@ -82,11 +82,12 @@ shoto_audit_all_packs_and_notify:
             (3, 'binary_sensor.shoto_ils6300_pack3_eep_valid', 'binary_sensor.shoto_ils6300_pack3_online'),
             (4, 'binary_sensor.shoto_ils6300_pack4_eep_valid', 'binary_sensor.shoto_ils6300_pack4_online')
           ] %}
-          Audit EEPROM read-only PLTS Samoto ILS6300 selesai.
-          {% for idx, eid, online_eid in packs -%}
-          {%- if state_attr(eid, 'valid') -%}
-          Pack#{{ idx }}=OK(CellOV={{ state_attr(eid, 'p_cov') }}mV,CellUV={{ state_attr(eid, 'p_cuv') }}mV){{ ', ' if not loop.last else '' }}
-          {%- elif idx <= 2 or is_state(online_eid, 'on') -%}
-          Pack#{{ idx }}=Belum{{ ', ' if not loop.last else '' }}
-          {%- endif -%}
-          {%- endfor %}
+          {% set ns = namespace(parts=[]) %}
+          {% for idx, eid, online_eid in packs %}
+            {% if state_attr(eid, 'valid') %}
+              {% set ns.parts = ns.parts + ['Pack#' ~ idx ~ '=OK(CellOV=' ~ state_attr(eid, 'p_cov') ~ 'mV,CellUV=' ~ state_attr(eid, 'p_cuv') ~ 'mV)'] %}
+            {% elif idx <= 2 or is_state(online_eid, 'on') %}
+              {% set ns.parts = ns.parts + ['Pack#' ~ idx ~ '=Belum'] %}
+            {% endif %}
+          {% endfor %}
+          Audit EEPROM read-only PLTS Samoto ILS6300 selesai. {{ ns.parts | join(', ') }}
