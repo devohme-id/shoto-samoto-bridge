@@ -283,17 +283,25 @@ def parse_eeprom_json_keys() -> set[str]:
     return set(re.findall(r'w\.kv_[a-z0-9]+\(\s*"([a-z0-9_]+)"', body))
 
 
-def walk_lovelace_nodes(node, card_types: list[str], strings: list[str]) -> None:
+def walk_lovelace_nodes(
+    node, card_types: list[str], strings: list[str], *, is_card: bool = False
+) -> None:
     if isinstance(node, dict):
-        if "type" in node and isinstance(node["type"], str):
+        if is_card and "type" in node and isinstance(node["type"], str):
             card_types.append(node["type"])
         for k, v in node.items():
-            if k == "type":
+            if is_card and k == "type":
                 continue
-            walk_lovelace_nodes(v, card_types, strings)
+            if k == "cards" and isinstance(v, list):
+                for child in v:
+                    walk_lovelace_nodes(child, card_types, strings, is_card=True)
+            elif k == "card" and isinstance(v, dict):
+                walk_lovelace_nodes(v, card_types, strings, is_card=True)
+            else:
+                walk_lovelace_nodes(v, card_types, strings, is_card=False)
     elif isinstance(node, list):
         for item in node:
-            walk_lovelace_nodes(item, card_types, strings)
+            walk_lovelace_nodes(item, card_types, strings, is_card=is_card)
     elif isinstance(node, str):
         strings.append(node)
 
@@ -319,13 +327,16 @@ class TestShotoLovelaceDashboard(unittest.TestCase):
         ]
         self.assertEqual([v.get("title") for v in views], expected_titles)
 
+        paths = [v.get("path") for v in views]
+        self.assertTrue(all(isinstance(p, str) and p for p in paths))
+        self.assertEqual(len(set(paths)), 4, "View paths must be unique")
+
         card_types: list[str] = []
         strings: list[str] = []
         for view in views:
             self.assertIsInstance(view, dict)
-            self.assertTrue(view.get("path"))
             self.assertTrue(view.get("cards"))
-            walk_lovelace_nodes(view["cards"], card_types, strings)
+            walk_lovelace_nodes(view["cards"], card_types, strings, is_card=True)
 
         self.assertGreater(len(card_types), 0)
         for ctype in card_types:
@@ -339,6 +350,12 @@ class TestShotoLovelaceDashboard(unittest.TestCase):
                 f"Non-builtin Lovelace card type used: {ctype}",
             )
 
+        # View 1 tile grid must use 2 columns for mobile readability
+        view1_grids = [c for c in views[0]["cards"] if c.get("type") == "grid"]
+        self.assertTrue(view1_grids)
+        for g in view1_grids:
+            self.assertEqual(g.get("columns"), 2)
+
     def test_dashboard_entities_match_firmware_discovery_exact(self):
         dev_id = parse_ha_device_id()
         self.assertEqual(dev_id, "shoto_ils6300")
@@ -349,7 +366,7 @@ class TestShotoLovelaceDashboard(unittest.TestCase):
         dash = load_yaml_file(self.DASHBOARD_PATH)
         card_types: list[str] = []
         strings: list[str] = []
-        walk_lovelace_nodes(dash["views"], card_types, strings)
+        walk_lovelace_nodes(dash["views"], card_types, strings, is_card=False)
 
         entity_re = re.compile(
             r"\b(?:sensor|binary_sensor|button|switch|select|number)\.[a-z0-9_]+\b"
@@ -364,41 +381,14 @@ class TestShotoLovelaceDashboard(unittest.TestCase):
             [],
             f"Dashboard references unknown/orphan entities not in ha_mqtt_codec.hpp: {unknown}",
         )
+        missing_all = sorted(expected_entities - referenced_entities)
+        self.assertEqual(
+            missing_all,
+            [],
+            f"Dashboard is missing firmware discovery entities: {missing_all}",
+        )
 
-        # Verify all 60 cell entities (Pack 1..4 x Cell 01..15) are shown
-        for slot in range(1, 5):
-            for cell in range(1, 16):
-                eid = f"sensor.{dev_id}_pack{slot}_cell_{cell:02d}"
-                self.assertIn(eid, referenced_entities, f"Missing cell entity in dashboard: {eid}")
-            for temp in range(1, 6):
-                eid = f"sensor.{dev_id}_pack{slot}_temp_{temp}"
-                self.assertIn(eid, referenced_entities, f"Missing temp entity in dashboard: {eid}")
-            self.assertIn(f"binary_sensor.{dev_id}_pack{slot}_eep_valid", referenced_entities)
-
-        # Verify key global & guarded controls are present
-        required_global = [
-            f"sensor.{dev_id}_bank_soc",
-            f"sensor.{dev_id}_bank_voltage",
-            f"sensor.{dev_id}_bank_current",
-            f"sensor.{dev_id}_bank_power",
-            f"binary_sensor.{dev_id}_bank_valid",
-            f"sensor.{dev_id}_diag_inv_mode",
-            f"switch.{dev_id}_sw_maint_unlock",
-            f"sensor.{dev_id}_maint_unlock_rem_s",
-            f"select.{dev_id}_sel_bridge_mode",
-            f"switch.{dev_id}_sw_dyn_discovery",
-            f"number.{dev_id}_num_policy_cvl",
-            f"number.{dev_id}_num_policy_dvl",
-            f"number.{dev_id}_num_policy_ccl",
-            f"number.{dev_id}_num_policy_dcl",
-            f"number.{dev_id}_num_policy_max_dv",
-            f"button.{dev_id}_btn_policy_reset",
-            f"button.{dev_id}_btn_restart",
-        ]
-        for eid in required_global:
-            self.assertIn(eid, referenced_entities, f"Missing required entity in dashboard: {eid}")
-
-    def test_dashboard_view3_eeprom_attributes_match_codec(self):
+    def test_dashboard_view3_eeprom_attributes_and_guards(self):
         eeprom_keys = parse_eeprom_json_keys()
         prot_keys = {k for k in eeprom_keys if k.startswith("p_") and k != "p_ok"}
         alarm_keys = {k for k in eeprom_keys if k.startswith("a_") and k != "a_ok"}
@@ -409,7 +399,7 @@ class TestShotoLovelaceDashboard(unittest.TestCase):
         view3 = dash["views"][2]
         card_types: list[str] = []
         strings: list[str] = []
-        walk_lovelace_nodes(view3, card_types, strings)
+        walk_lovelace_nodes(view3["cards"], card_types, strings, is_card=True)
         joined = "\n".join(strings)
 
         attr_re = re.compile(
@@ -435,6 +425,87 @@ class TestShotoLovelaceDashboard(unittest.TestCase):
                 [],
                 f"Pack {pack_num} in View 3 missing EEPROM attributes: {missing}",
             )
+            self.assertIn(
+                f"state_attr('binary_sensor.shoto_ils6300_pack{pack_num}_eep_valid', 'valid')",
+                joined,
+            )
+
+        self.assertIn("Belum ada data audit EEPROM", joined)
+
+        cond_entities = {
+            cond.get("entity"): cond.get("state")
+            for card in view3["cards"]
+            if card.get("type") == "conditional"
+            for cond in card.get("conditions", [])
+        }
+        self.assertEqual(cond_entities.get("binary_sensor.shoto_ils6300_pack3_online"), "on")
+        self.assertEqual(cond_entities.get("binary_sensor.shoto_ils6300_pack4_online"), "on")
+
+    def test_dashboard_view4_critical_controls_gated_by_maint_unlock(self):
+        dash = load_yaml_file(self.DASHBOARD_PATH)
+        view4 = dash["views"][3]
+
+        # Top-level Kontrol Kritis must NOT be exposed outside a conditional guard.
+        for card in view4["cards"]:
+            self.assertNotIn(
+                "Kontrol Kritis",
+                card.get("title", ""),
+                "Kontrol Kritis must be gated inside conditional sw_maint_unlock == on",
+            )
+
+        # Find conditional cards in View 4 (inside vertical-stack or top-level).
+        conditionals: list[dict] = []
+
+        def _collect_conditionals(node) -> None:
+            if isinstance(node, dict):
+                if node.get("type") == "conditional":
+                    conditionals.append(node)
+                for v in node.values():
+                    _collect_conditionals(v)
+            elif isinstance(node, list):
+                for item in node:
+                    _collect_conditionals(item)
+
+        _collect_conditionals(view4["cards"])
+
+        unlock_on_cards = [
+            c["card"]
+            for c in conditionals
+            if any(
+                cond.get("entity") == "switch.shoto_ils6300_sw_maint_unlock"
+                and cond.get("state") == "on"
+                for cond in c.get("conditions", [])
+            )
+        ]
+        unlock_off_cards = [
+            c["card"]
+            for c in conditionals
+            if any(
+                cond.get("entity") == "switch.shoto_ils6300_sw_maint_unlock"
+                and cond.get("state") == "off"
+                for cond in c.get("conditions", [])
+            )
+        ]
+
+        self.assertEqual(len(unlock_on_cards), 1, "Expected 1 conditional card for sw_maint_unlock == on")
+        self.assertEqual(len(unlock_off_cards), 1, "Expected 1 conditional card for sw_maint_unlock == off")
+
+        on_types: list[str] = []
+        on_strings: list[str] = []
+        walk_lovelace_nodes(unlock_on_cards[0], on_types, on_strings, is_card=True)
+        on_joined = "\n".join(on_strings)
+        for critical_ent in (
+            "select.shoto_ils6300_sel_bridge_mode",
+            "switch.shoto_ils6300_sw_dyn_discovery",
+            "number.shoto_ils6300_num_policy_cvl",
+            "number.shoto_ils6300_num_policy_dvl",
+            "number.shoto_ils6300_num_policy_ccl",
+            "number.shoto_ils6300_num_policy_dcl",
+            "number.shoto_ils6300_num_policy_max_dv",
+            "button.shoto_ils6300_btn_policy_reset",
+            "button.shoto_ils6300_btn_restart",
+        ):
+            self.assertIn(critical_ent, on_joined)
 
 
 if __name__ == "__main__":
