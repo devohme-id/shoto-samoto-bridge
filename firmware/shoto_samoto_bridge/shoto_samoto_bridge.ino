@@ -78,6 +78,7 @@ static bool g_dynamic_discovery = DYNAMIC_PACK_DISCOVERY;
 static volatile bool g_bridge_active = (BRIDGE_MODE == MODE_BRIDGE_ACTIVE);
 static volatile bool g_force_rescan_packs = true;
 static uint8_t g_param_audit_mask = 0;
+static uint8_t g_param_audit_alt_mask = 0;
 static RuntimePolicyOverride g_runtime_policy = configured_default_runtime_policy();
 static bool g_raw_log = false;
 static bool g_bat_raw_log = false;
@@ -117,10 +118,10 @@ static uint32_t g_inv_last_63_ms = 0;
 static bool g_maint_unlock = false;
 static uint32_t g_maint_unlock_ms = 0;
 static uint32_t g_mqtt_reconnects = 0;
-static volatile bool g_ha_eeprom_dirty = false;
+static std::atomic<bool> g_ha_eeprom_dirty{false};
 #endif
 
-static void queue_param_audit_slot(uint8_t slot_1based_or_0_all) {
+static void queue_param_audit_slot(uint8_t slot_1based_or_0_all, bool probe_alt_protos = true) {
     if (!g_snap_mutex) return;
     if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
         if (slot_1based_or_0_all == 0u) {
@@ -128,16 +129,28 @@ static void queue_param_audit_slot(uint8_t slot_1based_or_0_all) {
             for (uint8_t i = 0u; i < MAX_PACKS; ++i) {
                 if (g_pack_online[i]) mask |= static_cast<uint8_t>(1u << i);
             }
-            if (mask == 0u) mask = 0x01u;
-            g_param_audit_mask |= mask;
+            if (mask == 0u && (probe_alt_protos || g_active_proto == PROTO_AUTO)) {
+                mask = 0x01u;
+            }
+            if (mask != 0u) {
+                g_param_audit_mask |= mask;
+                if (probe_alt_protos) g_param_audit_alt_mask |= mask;
+                else g_param_audit_alt_mask &= static_cast<uint8_t>(~mask);
+            }
         } else if (slot_1based_or_0_all <= MAX_PACKS) {
-            g_param_audit_mask |= static_cast<uint8_t>(1u << (slot_1based_or_0_all - 1u));
+            uint8_t idx = static_cast<uint8_t>(slot_1based_or_0_all - 1u);
+            if (probe_alt_protos || g_active_proto == PROTO_AUTO || g_pack_online[idx]) {
+                uint8_t bit = static_cast<uint8_t>(1u << idx);
+                g_param_audit_mask |= bit;
+                if (probe_alt_protos) g_param_audit_alt_mask |= bit;
+                else g_param_audit_alt_mask &= static_cast<uint8_t>(~bit);
+            }
         }
         xSemaphoreGive(g_snap_mutex);
     }
 }
 
-static void queue_param_audit_first_online() {
+static void queue_param_audit_first_online(bool probe_alt_protos = true) {
     if (!g_snap_mutex) return;
     if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
         uint8_t first_slot = 0u;
@@ -147,7 +160,10 @@ static void queue_param_audit_first_online() {
                 break;
             }
         }
-        g_param_audit_mask |= static_cast<uint8_t>(1u << first_slot);
+        uint8_t bit = static_cast<uint8_t>(1u << first_slot);
+        g_param_audit_mask |= bit;
+        if (probe_alt_protos) g_param_audit_alt_mask |= bit;
+        else g_param_audit_alt_mask &= static_cast<uint8_t>(~bit);
         xSemaphoreGive(g_snap_mutex);
     }
 }
@@ -321,7 +337,8 @@ static void print_hex_line(const char* prefix, const uint8_t* buf, size_t n) {
 }
 
 static void run_shoto_param_audit(
-    uint8_t slot_idx, uint8_t addr, const BankExt& snap, PackEepromSnapshot* eep_out)
+    uint8_t slot_idx, uint8_t addr, const BankExt& snap, PackEepromSnapshot* eep_out,
+    bool probe_alt_protos = true)
 {
     uint8_t rx[260];
     PackEepromSnapshot eep{};
@@ -362,21 +379,36 @@ static void run_shoto_param_audit(
     bool has_const_chg_v = false;
     float const_chg_v = 0.0f;
     uint8_t prot_ok_cnt = 0u;
+    uint8_t working_hdr = 0u;
+    bool got_any_tbd_rx = false;
+    bool aborted_dead_tbd = false;
+
+    auto tbd_probe = [&](uint8_t cmd, uint32_t wait_ms, uint8_t& used_hdr_out) -> size_t {
+        uint8_t tx[6];
+        const uint8_t first_hdr = (working_hdr != 0u) ? working_hdr : 0x7Cu;
+        const uint8_t second_hdr = (first_hdr == 0x7Cu) ? 0x7Eu : 0x7Cu;
+        used_hdr_out = first_hdr;
+        build_tbd_binary_req(addr, first_hdr, cmd, tx);
+        size_t n = uart_transact(BatSerial, tx, sizeof(tx), rx, sizeof(rx), wait_ms, true);
+        if (n == 0u && working_hdr == 0u) {
+            used_hdr_out = second_hdr;
+            build_tbd_binary_req(addr, second_hdr, cmd, tx);
+            n = uart_transact(BatSerial, tx, sizeof(tx), rx, sizeof(rx), wait_ms, true);
+        }
+        return n;
+    };
 
     // A. TBD_BINARY read-only protection parameter probes (never send 0xAA)
     for (size_t i = 0; i < sizeof(specs) / sizeof(specs[0]); ++i) {
         esp_task_wdt_reset();
-        uint8_t tx[6];
-        build_tbd_binary_req(addr, 0x7C, specs[i].cmd, tx);
-        size_t n = uart_transact(BatSerial, tx, sizeof(tx), rx, sizeof(rx), 220u, true);
-        if (n == 0u) {
-            build_tbd_binary_req(addr, 0x7E, specs[i].cmd, tx);
-            n = uart_transact(BatSerial, tx, sizeof(tx), rx, sizeof(rx), 220u, true);
-        }
+        uint8_t used_hdr = 0u;
+        size_t n = tbd_probe(specs[i].cmd, 220u, used_hdr);
+        if (n > 0u) got_any_tbd_rx = true;
         uint16_t raw = 0u;
         bool ok = parse_tbd_param_u16(rx, n, addr, specs[i].cmd, raw);
         float val = ok ? (static_cast<float>(raw) * specs[i].scale) : 0.0f;
         if (ok) {
+            if (working_hdr == 0u) working_hdr = used_hdr;
             prot_ok_cnt++;
             switch (specs[i].cmd) {
                 case 0x06: eep.prot.cell_ov_prot_mv = raw; break;
@@ -394,6 +426,8 @@ static void run_shoto_param_audit(
                 case 0x50: eep.prot.sleep_time_min  = raw; break;
                 default: break;
             }
+        } else if (n > 0u && working_hdr == 0u) {
+            working_hdr = used_hdr;
         }
         Serial.printf("[PARAM TBD_PROT addr=%u cmd=0x%02X name=%s ok=%s raw=%u val=%.3f%s rx=%uB hex=",
                       static_cast<unsigned>(addr),
@@ -408,22 +442,26 @@ static void run_shoto_param_audit(
             Serial.printf("%s%02X", (k == 0u) ? "" : " ", static_cast<unsigned>(rx[k]));
         }
         Serial.println("]");
+        if (i == 1u && !got_any_tbd_rx) {
+            Serial.printf("[PARAM ABORT] slot=%u addr=%u no TBD reply on first 2 probes -> skip remaining TBD probes\n",
+                          static_cast<unsigned>(slot_idx + 1u), static_cast<unsigned>(addr));
+            aborted_dead_tbd = true;
+            break;
+        }
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 
     // B. TBD_BINARY read-only alarm parameter table (cmd 0x43)
-    esp_task_wdt_reset();
-    uint8_t tx43[6];
-    build_tbd_binary_req(addr, 0x7C, 0x43, tx43);
-    size_t n43 = uart_transact(BatSerial, tx43, sizeof(tx43), rx, sizeof(rx), 550u, true);
-    if (n43 == 0u) {
-        build_tbd_binary_req(addr, 0x7E, 0x43, tx43);
-        n43 = uart_transact(BatSerial, tx43, sizeof(tx43), rx, sizeof(rx), 550u, true);
+    bool has_ap = false;
+    if (!aborted_dead_tbd) {
+        esp_task_wdt_reset();
+        uint8_t used_hdr_43 = 0u;
+        size_t n43 = tbd_probe(0x43, 550u, used_hdr_43);
+        char pfx43[48];
+        std::snprintf(pfx43, sizeof(pfx43), "[PARAM TBD_ALARM_43_RAW rx=%uB]", static_cast<unsigned>(n43));
+        print_hex_line(pfx43, rx, n43);
+        has_ap = parse_tbd_alarm_params_43(rx, n43, addr, eep.alarm);
     }
-    char pfx43[48];
-    std::snprintf(pfx43, sizeof(pfx43), "[PARAM TBD_ALARM_43_RAW rx=%uB]", static_cast<unsigned>(n43));
-    print_hex_line(pfx43, rx, n43);
-    bool has_ap = parse_tbd_alarm_params_43(rx, n43, addr, eep.alarm);
     const TbdAlarmParams& ap = eep.alarm;
     if (has_ap) {
         Serial.printf("[PARAM TBD_ALARM_43 tags=%u cell_ov=%.3fV/%.3fV cell_uv=%.3fV/%.3fV pack_ov=%.2fV/%.2fV pack_uv_low_alarm=%.2fV/%.2fV low_soc_alarm=%u%%/%u%% cell_dv=%umV/%umV]\n",
@@ -450,79 +488,87 @@ static void run_shoto_param_audit(
     if (eep_out) *eep_out = eep;
     if (slot_idx < MAX_PACKS && g_snap_mutex != nullptr) {
         if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
-            g_pack_eeprom[slot_idx] = eep;
+            if (eep.valid || !g_pack_eeprom[slot_idx].valid) {
+                g_pack_eeprom[slot_idx] = eep;
+            }
 #if ENABLE_HA_MQTT
-            g_ha_eeprom_dirty = true;
+            if (eep.valid) {
+                g_ha_eeprom_dirty.store(true, std::memory_order_release);
+            }
 #endif
             xSemaphoreGive(g_snap_mutex);
         }
     }
 
     // C. Shoto Modbus V1.2 FC04 (0x0FFF..0x1025) @ addr=214 & active addr
+    // D. YD/T 1363 CID2=47H read-only probe
+    const bool run_alt_protos = probe_alt_protos || (g_active_proto != PROTO_TBD_BINARY) || (!aborted_dead_tbd && !eep.valid);
     bool has_mb_float = false;
     float mb_float_v = 0.0f;
     float mb_boost_v = 0.0f;
-    uint8_t mb_probes[2] = {214u, addr};
-    size_t mb_probe_cnt = (addr == 214u) ? 1u : 2u;
-    for (size_t m = 0; m < mb_probe_cnt; ++m) {
-        esp_task_wdt_reset();
-        uint8_t paddr = mb_probes[m];
-        uint8_t tx_mb[8];
-        build_shoto_modbus_v12_req(paddr, tx_mb);
-        size_t nmb = uart_transact(BatSerial, tx_mb, sizeof(tx_mb), rx, sizeof(rx), 350u, true);
-        bool mb_ok = false, shifted = false;
-        size_t reg_cnt = 0;
-        uint16_t r34 = 0;
-        float r37_v = 0.0f, r38_v = 0.0f;
-        for (size_t s = 0; s + 5u <= nmb; ++s) {
-            if (rx[s] != paddr || rx[s + 1] != 0x04 || rx[s + 2] < 6u) continue;
-            size_t flen = static_cast<size_t>(rx[s + 2]) + 5u;
-            if (s + flen > nmb) continue;
-            uint16_t rx_crc = static_cast<uint16_t>(rx[s + flen - 2] | (rx[s + flen - 1] << 8));
-            if (modbus_crc16(rx + s, flen - 2u) != rx_crc) continue;
-            mb_ok = true;
-            reg_cnt = static_cast<size_t>(rx[s + 2]) / 2u;
-            auto reg = [&](size_t idx) -> uint16_t {
-                return (idx < reg_cnt) ? be_u16(rx + s + 3u + 2u * idx) : 0u;
-            };
-            shifted = (reg_cnt > 13u && reg(12) > 16u && reg(13) >= 1u && reg(13) <= 16u);
-            if (!shifted) {
-                if (reg_cnt > 34u) r34 = reg(34);
-                if (reg_cnt > 37u) r37_v = static_cast<float>(reg(37)) * 0.01f;
-                if (reg_cnt > 38u) r38_v = static_cast<float>(reg(38)) * 0.01f;
-                if (r37_v > 0.0f) {
-                    has_mb_float = true;
-                    mb_float_v = r37_v;
-                    mb_boost_v = r38_v;
+    if (run_alt_protos) {
+        uint8_t mb_probes[2] = {214u, addr};
+        size_t mb_probe_cnt = (addr == 214u) ? 1u : 2u;
+        for (size_t m = 0; m < mb_probe_cnt; ++m) {
+            esp_task_wdt_reset();
+            uint8_t paddr = mb_probes[m];
+            uint8_t tx_mb[8];
+            build_shoto_modbus_v12_req(paddr, tx_mb);
+            size_t nmb = uart_transact(BatSerial, tx_mb, sizeof(tx_mb), rx, sizeof(rx), 350u, true);
+            bool mb_ok = false, shifted = false;
+            size_t reg_cnt = 0;
+            uint16_t r34 = 0;
+            float r37_v = 0.0f, r38_v = 0.0f;
+            for (size_t s = 0; s + 5u <= nmb; ++s) {
+                if (rx[s] != paddr || rx[s + 1] != 0x04 || rx[s + 2] < 6u) continue;
+                size_t flen = static_cast<size_t>(rx[s + 2]) + 5u;
+                if (s + flen > nmb) continue;
+                uint16_t rx_crc = static_cast<uint16_t>(rx[s + flen - 2] | (rx[s + flen - 1] << 8));
+                if (modbus_crc16(rx + s, flen - 2u) != rx_crc) continue;
+                mb_ok = true;
+                reg_cnt = static_cast<size_t>(rx[s + 2]) / 2u;
+                auto reg = [&](size_t idx) -> uint16_t {
+                    return (idx < reg_cnt) ? be_u16(rx + s + 3u + 2u * idx) : 0u;
+                };
+                shifted = (reg_cnt > 13u && reg(12) > 16u && reg(13) >= 1u && reg(13) <= 16u);
+                if (!shifted) {
+                    if (reg_cnt > 34u) r34 = reg(34);
+                    if (reg_cnt > 37u) r37_v = static_cast<float>(reg(37)) * 0.01f;
+                    if (reg_cnt > 38u) r38_v = static_cast<float>(reg(38)) * 0.01f;
+                    if (r37_v > 0.0f) {
+                        has_mb_float = true;
+                        mb_float_v = r37_v;
+                        mb_boost_v = r38_v;
+                    }
                 }
+                break;
             }
-            break;
+            Serial.printf("[PARAM MODBUS_V12 addr=%u ok=%s rx=%uB regs=%u shifted=%s r34_max_i=%u r37_float_v=%.2fV r38_boost_v=%.2fV hex=",
+                          static_cast<unsigned>(paddr),
+                          mb_ok ? "YES" : "NO",
+                          static_cast<unsigned>(nmb),
+                          static_cast<unsigned>(reg_cnt),
+                          shifted ? "YES" : "NO",
+                          static_cast<unsigned>(r34),
+                          r37_v,
+                          r38_v);
+            for (size_t k = 0; k < nmb && k < 100u; ++k) {
+                Serial.printf("%s%02X", (k == 0u) ? "" : " ", static_cast<unsigned>(rx[k]));
+            }
+            Serial.println("]");
+            vTaskDelay(pdMS_TO_TICKS(30));
         }
-        Serial.printf("[PARAM MODBUS_V12 addr=%u ok=%s rx=%uB regs=%u shifted=%s r34_max_i=%u r37_float_v=%.2fV r38_boost_v=%.2fV hex=",
-                      static_cast<unsigned>(paddr),
-                      mb_ok ? "YES" : "NO",
-                      static_cast<unsigned>(nmb),
-                      static_cast<unsigned>(reg_cnt),
-                      shifted ? "YES" : "NO",
-                      static_cast<unsigned>(r34),
-                      r37_v,
-                      r38_v);
-        for (size_t k = 0; k < nmb && k < 100u; ++k) {
-            Serial.printf("%s%02X", (k == 0u) ? "" : " ", static_cast<unsigned>(rx[k]));
-        }
-        Serial.println("]");
-        vTaskDelay(pdMS_TO_TICKS(30));
-    }
 
-    // D. YD/T 1363 CID2=47H read-only probe
-    esp_task_wdt_reset();
-    char info47[4], tx47[64];
-    std::snprintf(info47, sizeof(info47), "%02X", static_cast<unsigned>(addr));
-    size_t tx47_len = build_ydt1363_frame("26", "00", "46", "47", info47, tx47, sizeof(tx47));
-    size_t n47 = uart_transact(BatSerial, reinterpret_cast<const uint8_t*>(tx47), tx47_len, rx, sizeof(rx), 350u, true);
-    char pfx47[48];
-    std::snprintf(pfx47, sizeof(pfx47), "[PARAM YDT1363_47H rx=%uB]", static_cast<unsigned>(n47));
-    print_hex_line(pfx47, rx, n47);
+        // D. YD/T 1363 CID2=47H read-only probe
+        esp_task_wdt_reset();
+        char info47[4], tx47[64];
+        std::snprintf(info47, sizeof(info47), "%02X", static_cast<unsigned>(addr));
+        size_t tx47_len = build_ydt1363_frame("26", "00", "46", "47", info47, tx47, sizeof(tx47));
+        size_t n47 = uart_transact(BatSerial, reinterpret_cast<const uint8_t*>(tx47), tx47_len, rx, sizeof(rx), 350u, true);
+        char pfx47[48];
+        std::snprintf(pfx47, sizeof(pfx47), "[PARAM YDT1363_47H rx=%uB]", static_cast<unsigned>(n47));
+        print_hex_line(pfx47, rx, n47);
+    }
 
     // E. 7-Parameter Audit Summary
     float pol_cvl = (snap.core.cvl > 0.0f) ? snap.core.cvl : POLICY_CVL_MAX_V;
@@ -681,10 +727,14 @@ static void bat_poll_task(void* arg) {
         if (g_active_proto == PROTO_AUTO) {
             if (!run_autodetect(lim)) {
                 uint8_t auto_audit_slot = MAX_PACKS;
+                bool auto_probe_alt = true;
                 if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
                     for (uint8_t i = 0u; i < MAX_PACKS; ++i) {
-                        if ((g_param_audit_mask & static_cast<uint8_t>(1u << i)) != 0u) {
-                            g_param_audit_mask &= static_cast<uint8_t>(~(1u << i));
+                        uint8_t bit = static_cast<uint8_t>(1u << i);
+                        if ((g_param_audit_mask & bit) != 0u) {
+                            auto_probe_alt = ((g_param_audit_alt_mask & bit) != 0u);
+                            g_param_audit_mask &= static_cast<uint8_t>(~bit);
+                            g_param_audit_alt_mask &= static_cast<uint8_t>(~bit);
                             auto_audit_slot = i;
                             break;
                         }
@@ -693,7 +743,7 @@ static void bat_poll_task(void* arg) {
                 }
                 if (auto_audit_slot < MAX_PACKS) {
                     BankExt empty_bank{};
-                    run_shoto_param_audit(auto_audit_slot, g_pack_addrs[auto_audit_slot], empty_bank, nullptr);
+                    run_shoto_param_audit(auto_audit_slot, g_pack_addrs[auto_audit_slot], empty_bank, nullptr, auto_probe_alt);
                 }
                 vTaskDelay(pdMS_TO_TICKS(3000));
                 continue;
@@ -866,6 +916,7 @@ static void bat_poll_task(void* arg) {
         bool got_snap = false;
         bool scale_changed = false;
         bool do_param_audit = false;
+        bool param_probe_alt = true;
         uint8_t param_slot = 0u;
         uint8_t param_addr = g_pack_addrs[0];
         PackState active_packs[MAX_PACKS]{};
@@ -874,11 +925,18 @@ static void bat_poll_task(void* arg) {
             got_snap = true;
             active_count = collect_active_packs(active_packs, active_slots);
             for (uint8_t i = 0u; i < MAX_PACKS; ++i) {
-                if ((g_param_audit_mask & static_cast<uint8_t>(1u << i)) != 0u) {
-                    g_param_audit_mask &= static_cast<uint8_t>(~(1u << i));
+                uint8_t bit = static_cast<uint8_t>(1u << i);
+                if ((g_param_audit_mask & bit) != 0u) {
+                    bool alt = ((g_param_audit_alt_mask & bit) != 0u);
+                    g_param_audit_mask &= static_cast<uint8_t>(~bit);
+                    g_param_audit_alt_mask &= static_cast<uint8_t>(~bit);
+                    if (g_active_proto != PROTO_AUTO && !alt && !g_pack_online[i]) {
+                        continue; // HA request on offline slot: skip without delaying live polling
+                    }
                     do_param_audit = true;
                     param_slot = i;
                     param_addr = g_pack_addrs[i];
+                    param_probe_alt = alt;
                     break;
                 }
             }
@@ -973,7 +1031,7 @@ static void bat_poll_task(void* arg) {
                           new_bank.core.ccl, new_bank.core.dcl);
         }
         if (do_param_audit) {
-            run_shoto_param_audit(param_slot, param_addr, new_bank, nullptr);
+            run_shoto_param_audit(param_slot, param_addr, new_bank, nullptr, param_probe_alt);
         }
 
         if (millis() - last_log >= 5000) {
@@ -1019,7 +1077,7 @@ static void bat_poll_task(void* arg) {
                 }
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(POLL_INTERVAL_MS));
+        vTaskDelay(pdMS_TO_TICKS(do_param_audit ? 25UL : POLL_INTERVAL_MS));
     }
 }
 
@@ -1422,7 +1480,7 @@ static void ha_mqtt_task(void* arg) {
                     Serial.println("[HA CMD] Rescan packs triggered");
                     break;
                 case HA_ACT_AUDIT_EEPROM:
-                    queue_param_audit_slot(cmd.u8_val);
+                    queue_param_audit_slot(cmd.u8_val, false);
                     Serial.printf("[HA CMD] Audit EEPROM queued (target=%u)\n", static_cast<unsigned>(cmd.u8_val));
                     break;
                 case HA_ACT_RESET_DIAG:
@@ -1519,7 +1577,8 @@ static void ha_mqtt_task(void* arg) {
                                ((now_ms - last_telem_pub_ms) >= HA_TELEMETRY_INTERVAL_MS);
         const bool due_cells = force_cells_pub || (last_cells_pub_ms == 0u) ||
                                ((now_ms - last_cells_pub_ms) >= HA_CELLS_INTERVAL_MS);
-        const bool eep_dirty = g_ha_eeprom_dirty || force_eeprom_pub;
+        const bool force_eep = force_eeprom_pub;
+        const bool eep_dirty = g_ha_eeprom_dirty.load(std::memory_order_acquire) || force_eep;
 
         if (due_telem || due_cells || eep_dirty) {
             BankExt bank_snap{};
@@ -1535,6 +1594,7 @@ static void ha_mqtt_task(void* arg) {
             uint32_t maint_ms = 0u;
             RuntimePolicyOverride pol_snap = configured_default_runtime_policy();
             uint32_t snap_now_ms = 0u;
+            bool eep_dirty_snap = false;
 
             bool copied = false;
             if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
@@ -1580,7 +1640,7 @@ static void ha_mqtt_task(void* arg) {
                 diag_snap.tx61_age_ms = age_since_ms(snap_now_ms, g_inv_last_61_ms);
                 diag_snap.tx62_age_ms = age_since_ms(snap_now_ms, g_inv_last_62_ms);
                 diag_snap.tx63_age_ms = age_since_ms(snap_now_ms, g_inv_last_63_ms);
-                g_ha_eeprom_dirty = false;
+                eep_dirty_snap = g_ha_eeprom_dirty.exchange(false, std::memory_order_acq_rel) || force_eep;
                 copied = true;
                 xSemaphoreGive(g_snap_mutex);
             }
@@ -1595,7 +1655,7 @@ static void ha_mqtt_task(void* arg) {
                     }
                 }
 
-                if (due_telem) {
+                if (due_telem && g_ha_mqtt.connected()) {
                     last_telem_pub_ms = now_ms;
                     force_state_pub = false;
 
@@ -1605,6 +1665,7 @@ static void ha_mqtt_task(void* arg) {
                         std::snprintf(topic_buf, sizeof(topic_buf), "%s/bank", MQTT_TOPIC_PREFIX);
                         g_ha_mqtt.publish(topic_buf, payload_buf, false);
                     }
+                    esp_task_wdt_reset();
 
                     HaSystemHealth sys{};
                     sys.wifi_rssi_dbm = static_cast<int32_t>(WiFi.RSSI());
@@ -1615,12 +1676,15 @@ static void ha_mqtt_task(void* arg) {
                     IPAddress ip = WiFi.localIP();
                     std::snprintf(sys.ip_addr, sizeof(sys.ip_addr), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
 
-                    if (build_diag_state_json(diag_snap, sys, payload_buf, sizeof(payload_buf)) > 0u) {
+                    if (g_ha_mqtt.connected() &&
+                        build_diag_state_json(diag_snap, sys, payload_buf, sizeof(payload_buf)) > 0u) {
                         std::snprintf(topic_buf, sizeof(topic_buf), "%s/diag", MQTT_TOPIC_PREFIX);
                         g_ha_mqtt.publish(topic_buf, payload_buf, false);
                     }
+                    esp_task_wdt_reset();
 
                     for (uint8_t slot = 0u; slot < MAX_PACKS; ++slot) {
+                        if (!g_ha_mqtt.connected()) break;
                         uint32_t age_ms = (online_snap[slot] && packs_snap[slot].core.complete)
                             ? age_since_ms(snap_now_ms, packs_snap[slot].core.sampled_ms)
                             : 0u;
@@ -1632,12 +1696,14 @@ static void ha_mqtt_task(void* arg) {
                             g_ha_mqtt.publish(topic_buf, payload_buf, false);
                         }
                     }
+                    esp_task_wdt_reset();
                 }
 
-                if (due_cells) {
+                if (due_cells && g_ha_mqtt.connected()) {
                     last_cells_pub_ms = now_ms;
                     force_cells_pub = false;
                     for (uint8_t slot = 0u; slot < MAX_PACKS; ++slot) {
+                        if (!g_ha_mqtt.connected()) break;
                         if (!online_snap[slot] || packs_snap[slot].ext.cell_count == 0u) continue;
                         if (build_pack_cells_json(packs_snap[slot], payload_buf, sizeof(payload_buf)) > 0u) {
                             std::snprintf(topic_buf, sizeof(topic_buf), "%s/pack%u/cells",
@@ -1645,14 +1711,20 @@ static void ha_mqtt_task(void* arg) {
                             g_ha_mqtt.publish(topic_buf, payload_buf, false);
                         }
                     }
+                    esp_task_wdt_reset();
                 }
 
-                if (eep_dirty) {
-                    force_eeprom_pub = false;
+                if (eep_dirty_snap) {
+                    if (force_eep) force_eeprom_pub = false;
                     for (uint8_t slot = 0u; slot < MAX_PACKS; ++slot) {
                         if (!eep_snap[slot].valid) continue;
-                        if (eep_snap[slot].audited_ms != last_pub_eeprom_ms[slot] ||
+                        if (force_eep ||
+                            eep_snap[slot].audited_ms != last_pub_eeprom_ms[slot] ||
                             last_pub_eeprom_ms[slot] == 0u) {
+                            if (!g_ha_mqtt.connected()) {
+                                force_eeprom_pub = true;
+                                break;
+                            }
                             if (build_pack_eeprom_json(eep_snap[slot], payload_buf, sizeof(payload_buf)) > 0u) {
                                 std::snprintf(topic_buf, sizeof(topic_buf), "%s/pack%u/eeprom",
                                               MQTT_TOPIC_PREFIX, static_cast<unsigned>(slot + 1u));
@@ -1664,6 +1736,7 @@ static void ha_mqtt_task(void* arg) {
                             }
                         }
                     }
+                    esp_task_wdt_reset();
                 }
             }
         }
