@@ -14,6 +14,19 @@
 #include <HardwareSerial.h>
 #include <esp_idf_version.h>
 #include <esp_task_wdt.h>
+#include "config.h"
+
+#if ENABLE_HA_MQTT
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <Preferences.h>
+#include <ArduinoOTA.h>
+#if __has_include("secrets.h")
+  #include "secrets.h"
+#else
+  #include "secrets.h.example"
+#endif
+#endif
 
 #ifdef min
 #undef min
@@ -22,27 +35,31 @@
 #undef max
 #endif
 
-#include "config.h"
 #include "safety_core.hpp"
 #include "bridge_protocols.hpp"
+#include "ha_mqtt_codec.hpp"
 
 HardwareSerial BatSerial(BAT_UART_NUM);
 HardwareSerial InvSerial(INV_UART_NUM);
 
+static constexpr const char* SW_VERSION = "3.1.0";
 static constexpr uint8_t MAX_PACKS = MAX_SUPPORTED_PACKS;
 static_assert(
     POLICY_FRESHNESS_MS >= (PACK_OFFLINE_MISSES > 1 ? (PACK_OFFLINE_MISSES - 1) : 1) * (POLL_INTERVAL_MS + 2500UL),
     "POLICY_FRESHNESS_MS terlalu mepet untuk hot-unplug bebas glitch");
 static SemaphoreHandle_t g_snap_mutex = nullptr;
 static PackState g_packs[MAX_PACKS];
+static PackEepromSnapshot g_pack_eeprom[MAX_PACKS];
 static bool g_pack_online[MAX_PACKS] = {false, false, false, false};
 static uint8_t g_pack_miss[MAX_PACKS] = {0, 0, 0, 0};
 static BankExt g_bank;
 static ShotoProtoKind g_active_proto = static_cast<ShotoProtoKind>(SHOTO_PROTOCOL);
 static uint8_t g_pack_addrs[MAX_PACKS] = {PACK1_ADDR, PACK2_ADDR, PACK3_ADDR, PACK4_ADDR};
 static bool g_dynamic_discovery = DYNAMIC_PACK_DISCOVERY;
+static volatile bool g_bridge_active = (BRIDGE_MODE == MODE_BRIDGE_ACTIVE);
 static volatile bool g_force_rescan_packs = true;
-static volatile bool g_dump_params = false;
+static uint8_t g_param_audit_mask = 0;
+static RuntimePolicyOverride g_runtime_policy = default_runtime_policy();
 static bool g_raw_log = false;
 static bool g_bat_raw_log = false;
 static bool g_auto_cell_log = AUTO_LOG_CELLS;
@@ -76,6 +93,45 @@ static char g_inv_last_tx_63[48] = "";
 static uint32_t g_inv_last_61_ms = 0;
 static uint32_t g_inv_last_62_ms = 0;
 static uint32_t g_inv_last_63_ms = 0;
+
+#if ENABLE_HA_MQTT
+static bool g_maint_unlock = false;
+static uint32_t g_maint_unlock_ms = 0;
+static uint32_t g_mqtt_reconnects = 0;
+static volatile bool g_ha_eeprom_dirty = false;
+#endif
+
+static void queue_param_audit_slot(uint8_t slot_1based_or_0_all) {
+    if (!g_snap_mutex) return;
+    if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+        if (slot_1based_or_0_all == 0u) {
+            uint8_t mask = 0u;
+            for (uint8_t i = 0u; i < MAX_PACKS; ++i) {
+                if (g_pack_online[i]) mask |= static_cast<uint8_t>(1u << i);
+            }
+            if (mask == 0u) mask = 0x01u;
+            g_param_audit_mask |= mask;
+        } else if (slot_1based_or_0_all <= MAX_PACKS) {
+            g_param_audit_mask |= static_cast<uint8_t>(1u << (slot_1based_or_0_all - 1u));
+        }
+        xSemaphoreGive(g_snap_mutex);
+    }
+}
+
+static void queue_param_audit_first_online() {
+    if (!g_snap_mutex) return;
+    if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+        uint8_t first_slot = 0u;
+        for (uint8_t i = 0u; i < MAX_PACKS; ++i) {
+            if (g_pack_online[i] && g_pack_addrs[i] > 0u) {
+                first_slot = i;
+                break;
+            }
+        }
+        g_param_audit_mask |= static_cast<uint8_t>(1u << first_slot);
+        xSemaphoreGive(g_snap_mutex);
+    }
+}
 
 static void copy_tx_stripped(char* dst, size_t dst_cap, const char* src, size_t src_len) {
     if (dst_cap == 0u) return;
@@ -245,10 +301,16 @@ static void print_hex_line(const char* prefix, const uint8_t* buf, size_t n) {
     Serial.println();
 }
 
-static void run_shoto_param_audit(uint8_t addr, const BankExt& snap) {
+static void run_shoto_param_audit(
+    uint8_t slot_idx, uint8_t addr, const BankExt& snap, PackEepromSnapshot* eep_out)
+{
     uint8_t rx[260];
-    Serial.printf("[PARAM START addr=%u proto=%s]\n",
-                  static_cast<unsigned>(addr), proto_name(g_active_proto));
+    PackEepromSnapshot eep{};
+    eep.addr = addr;
+    Serial.printf("[PARAM START slot=%u addr=%u proto=%s]\n",
+                  static_cast<unsigned>(slot_idx + 1u),
+                  static_cast<unsigned>(addr),
+                  proto_name(g_active_proto));
 
     struct TbdProtProbeSpec {
         uint8_t cmd;
@@ -280,6 +342,7 @@ static void run_shoto_param_audit(uint8_t addr, const BankExt& snap) {
     float pack_uv_rec_v = 0.0f;
     bool has_const_chg_v = false;
     float const_chg_v = 0.0f;
+    uint8_t prot_ok_cnt = 0u;
 
     // A. TBD_BINARY read-only protection parameter probes (never send 0xAA)
     for (size_t i = 0; i < sizeof(specs) / sizeof(specs[0]); ++i) {
@@ -295,10 +358,23 @@ static void run_shoto_param_audit(uint8_t addr, const BankExt& snap) {
         bool ok = parse_tbd_param_u16(rx, n, addr, specs[i].cmd, raw);
         float val = ok ? (static_cast<float>(raw) * specs[i].scale) : 0.0f;
         if (ok) {
-            if (specs[i].cmd == 0x09) { has_cell_uv_prot = true; cell_uv_prot_v = val; }
-            else if (specs[i].cmd == 0x2E) { has_pack_uv_prot = true; pack_uv_prot_v = val; }
-            else if (specs[i].cmd == 0x2F) { has_pack_uv_rec = true; pack_uv_rec_v = val; }
-            else if (specs[i].cmd == 0x35) { has_const_chg_v = true; const_chg_v = val; }
+            prot_ok_cnt++;
+            switch (specs[i].cmd) {
+                case 0x06: eep.prot.cell_ov_prot_mv = raw; break;
+                case 0x07: eep.prot.cell_ov_rec_mv  = raw; break;
+                case 0x09: eep.prot.cell_uv_prot_mv = raw; has_cell_uv_prot = true; cell_uv_prot_v = val; break;
+                case 0x0A: eep.prot.cell_uv_rec_mv  = raw; break;
+                case 0x2A: eep.prot.pack_ov_prot_cv = raw; break;
+                case 0x2B: eep.prot.pack_ov_rec_cv  = raw; break;
+                case 0x2E: eep.prot.pack_uv_prot_cv = raw; has_pack_uv_prot = true; pack_uv_prot_v = val; break;
+                case 0x2F: eep.prot.pack_uv_rec_cv  = raw; has_pack_uv_rec = true; pack_uv_rec_v = val; break;
+                case 0x35: eep.prot.const_chg_cv    = raw; has_const_chg_v = true; const_chg_v = val; break;
+                case 0x2D: eep.prot.const_chg_ci    = raw; break;
+                case 0x32: eep.prot.cell_sleep_mv   = raw; break;
+                case 0x3E: eep.prot.uv_off_interval = raw; break;
+                case 0x50: eep.prot.sleep_time_min  = raw; break;
+                default: break;
+            }
         }
         Serial.printf("[PARAM TBD_PROT addr=%u cmd=0x%02X name=%s ok=%s raw=%u val=%.3f%s rx=%uB hex=",
                       static_cast<unsigned>(addr),
@@ -328,8 +404,8 @@ static void run_shoto_param_audit(uint8_t addr, const BankExt& snap) {
     char pfx43[48];
     std::snprintf(pfx43, sizeof(pfx43), "[PARAM TBD_ALARM_43_RAW rx=%uB]", static_cast<unsigned>(n43));
     print_hex_line(pfx43, rx, n43);
-    TbdAlarmParams ap{};
-    bool has_ap = parse_tbd_alarm_params_43(rx, n43, addr, ap);
+    bool has_ap = parse_tbd_alarm_params_43(rx, n43, addr, eep.alarm);
+    const TbdAlarmParams& ap = eep.alarm;
     if (has_ap) {
         Serial.printf("[PARAM TBD_ALARM_43 tags=%u cell_ov=%.3fV/%.3fV cell_uv=%.3fV/%.3fV pack_ov=%.2fV/%.2fV pack_uv_low_alarm=%.2fV/%.2fV low_soc_alarm=%u%%/%u%% cell_dv=%umV/%umV]\n",
                       static_cast<unsigned>(ap.tag_count),
@@ -345,6 +421,22 @@ static void run_shoto_param_audit(uint8_t addr, const BankExt& snap) {
                       static_cast<unsigned>(ap.low_soc_alarm_rec_pct),
                       static_cast<unsigned>(ap.cell_diff_alarm_mv),
                       static_cast<unsigned>(ap.cell_diff_alarm_rec_mv));
+    }
+
+    uint32_t aud_now = millis();
+    eep.prot.valid = (prot_ok_cnt > 0u);
+    eep.prot.audited_ms = aud_now;
+    eep.audited_ms = aud_now;
+    eep.valid = (eep.prot.valid || has_ap);
+    if (eep_out) *eep_out = eep;
+    if (slot_idx < MAX_PACKS && g_snap_mutex != nullptr) {
+        if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+            g_pack_eeprom[slot_idx] = eep;
+#if ENABLE_HA_MQTT
+            g_ha_eeprom_dirty = true;
+#endif
+            xSemaphoreGive(g_snap_mutex);
+        }
     }
 
     // C. Shoto Modbus V1.2 FC04 (0x0FFF..0x1025) @ addr=214 & active addr
@@ -551,12 +643,38 @@ static void bat_poll_task(void* arg) {
 
     for (;;) {
         esp_task_wdt_reset();
+        RuntimePolicyOverride rpol = default_runtime_policy();
+        bool dyn_disc = g_dynamic_discovery;
+        if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+            rpol = g_runtime_policy;
+            dyn_disc = g_dynamic_discovery;
+            xSemaphoreGive(g_snap_mutex);
+        }
+        clamp_runtime_policy(rpol);
+        lim.cvl_v = rpol.cvl_v;
+        lim.dvl_v = rpol.dvl_v;
+        pol.max_delta_v = rpol.max_delta_v;
+        dyn_lim.ccl_1pack_a = std::min(POLICY_CCL_1PACK_A, rpol.ccl_max_a);
+        dyn_lim.dcl_1pack_a = std::min(POLICY_DCL_1PACK_A, rpol.dcl_max_a);
+        dyn_lim.ccl_max_a = rpol.ccl_max_a;
+        dyn_lim.dcl_max_a = rpol.dcl_max_a;
+
         if (g_active_proto == PROTO_AUTO) {
             if (!run_autodetect(lim)) {
-                if (g_dump_params) {
-                    g_dump_params = false;
+                uint8_t auto_audit_slot = MAX_PACKS;
+                if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+                    for (uint8_t i = 0u; i < MAX_PACKS; ++i) {
+                        if ((g_param_audit_mask & static_cast<uint8_t>(1u << i)) != 0u) {
+                            g_param_audit_mask &= static_cast<uint8_t>(~(1u << i));
+                            auto_audit_slot = i;
+                            break;
+                        }
+                    }
+                    xSemaphoreGive(g_snap_mutex);
+                }
+                if (auto_audit_slot < MAX_PACKS) {
                     BankExt empty_bank{};
-                    run_shoto_param_audit(g_pack_addrs[0], empty_bank);
+                    run_shoto_param_audit(auto_audit_slot, g_pack_addrs[auto_audit_slot], empty_bank, nullptr);
                 }
                 vTaskDelay(pdMS_TO_TICKS(3000));
                 continue;
@@ -569,7 +687,7 @@ static void bat_poll_task(void* arg) {
             xSemaphoreGive(g_snap_mutex);
         }
 
-        if (!g_dynamic_discovery) {
+        if (!dyn_disc) {
             g_force_rescan_packs = false;
             uint8_t fixed_n = (FIXED_PACK_COUNT < 1) ? 1
                 : ((FIXED_PACK_COUNT > MAX_PACKS) ? MAX_PACKS : static_cast<uint8_t>(FIXED_PACK_COUNT));
@@ -703,9 +821,9 @@ static void bat_poll_task(void* arg) {
             }
         }
 
-        auto collect_active_packs = [](PackState* active_out, uint8_t* slots_out) -> size_t {
+        auto collect_active_packs = [dyn_disc](PackState* active_out, uint8_t* slots_out) -> size_t {
             size_t cnt = 0;
-            if (!g_dynamic_discovery) {
+            if (!dyn_disc) {
                 uint8_t fixed_n = (FIXED_PACK_COUNT < 1) ? 1
                     : ((FIXED_PACK_COUNT > MAX_PACKS) ? MAX_PACKS : static_cast<uint8_t>(FIXED_PACK_COUNT));
                 for (uint8_t i = 0; i < fixed_n; ++i) {
@@ -729,20 +847,20 @@ static void bat_poll_task(void* arg) {
         bool got_snap = false;
         bool scale_changed = false;
         bool do_param_audit = false;
+        uint8_t param_slot = 0u;
         uint8_t param_addr = g_pack_addrs[0];
         PackState active_packs[MAX_PACKS]{};
         uint8_t active_slots[MAX_PACKS] = {};
         if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
             got_snap = true;
             active_count = collect_active_packs(active_packs, active_slots);
-            if (g_dump_params) {
-                g_dump_params = false;
-                do_param_audit = true;
-                for (uint8_t i = 0; i < MAX_PACKS; ++i) {
-                    if (g_pack_online[i] && g_pack_addrs[i] > 0u) {
-                        param_addr = g_pack_addrs[i];
-                        break;
-                    }
+            for (uint8_t i = 0u; i < MAX_PACKS; ++i) {
+                if ((g_param_audit_mask & static_cast<uint8_t>(1u << i)) != 0u) {
+                    g_param_audit_mask &= static_cast<uint8_t>(~(1u << i));
+                    do_param_audit = true;
+                    param_slot = i;
+                    param_addr = g_pack_addrs[i];
+                    break;
                 }
             }
             xSemaphoreGive(g_snap_mutex);
@@ -836,7 +954,8 @@ static void bat_poll_task(void* arg) {
                           new_bank.core.ccl, new_bank.core.dcl);
         }
         if (do_param_audit) {
-            run_shoto_param_audit(param_addr, new_bank);
+            PackEepromSnapshot eep_tmp{};
+            run_shoto_param_audit(param_slot, param_addr, new_bank, &eep_tmp);
         }
 
         if (millis() - last_log >= 5000) {
@@ -929,51 +1048,53 @@ static void inv_bridge_task(void* arg) {
                         Serial.printf("[INV RX] %s\n", rx_buf);
                     }
                     BankExt snap{};
+                    bool bridge_active = g_bridge_active;
                     if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
                         snap = g_bank;
+                        bridge_active = g_bridge_active;
                         xSemaphoreGive(g_snap_mutex);
                     } else {
                         g_inv_mutex_miss++;
                     }
-#if BRIDGE_MODE == MODE_BRIDGE_ACTIVE
-                    char resp[360];
-                    size_t resp_len = handle_pylontech_request(rx_buf, rx_pos, snap, resp, sizeof(resp));
-                    if (resp_len > 0) {
-                        InvSerial.write(reinterpret_cast<const uint8_t*>(resp), resp_len);
-                        InvSerial.flush();
-                        g_inv_resp_count++;
-                        uint32_t now_tx = millis();
-                        if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-                            if (rx_pos >= 18u) {
-                                if (rx_buf[7] == '6' && rx_buf[8] == '0') {
-                                    g_inv_60_cnt++;
-                                } else if (rx_buf[7] == '6' && rx_buf[8] == '1') {
-                                    g_inv_61_cnt++;
-                                    g_inv_last_61_ms = now_tx;
-                                    copy_tx_stripped(g_inv_last_tx_61, sizeof(g_inv_last_tx_61), resp, resp_len);
-                                } else if (rx_buf[7] == '6' && rx_buf[8] == '2') {
-                                    g_inv_62_cnt++;
-                                    g_inv_last_62_ms = now_tx;
-                                    copy_tx_stripped(g_inv_last_tx_62, sizeof(g_inv_last_tx_62), resp, resp_len);
-                                } else if (rx_buf[7] == '6' && rx_buf[8] == '3') {
-                                    g_inv_63_cnt++;
-                                    g_inv_last_63_ms = now_tx;
-                                    copy_tx_stripped(g_inv_last_tx_63, sizeof(g_inv_last_tx_63), resp, resp_len);
+                    if (bridge_active) {
+                        char resp[360];
+                        size_t resp_len = handle_pylontech_request(rx_buf, rx_pos, snap, resp, sizeof(resp));
+                        if (resp_len > 0) {
+                            InvSerial.write(reinterpret_cast<const uint8_t*>(resp), resp_len);
+                            InvSerial.flush();
+                            g_inv_resp_count++;
+                            uint32_t now_tx = millis();
+                            if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+                                if (rx_pos >= 18u) {
+                                    if (rx_buf[7] == '6' && rx_buf[8] == '0') {
+                                        g_inv_60_cnt++;
+                                    } else if (rx_buf[7] == '6' && rx_buf[8] == '1') {
+                                        g_inv_61_cnt++;
+                                        g_inv_last_61_ms = now_tx;
+                                        copy_tx_stripped(g_inv_last_tx_61, sizeof(g_inv_last_tx_61), resp, resp_len);
+                                    } else if (rx_buf[7] == '6' && rx_buf[8] == '2') {
+                                        g_inv_62_cnt++;
+                                        g_inv_last_62_ms = now_tx;
+                                        copy_tx_stripped(g_inv_last_tx_62, sizeof(g_inv_last_tx_62), resp, resp_len);
+                                    } else if (rx_buf[7] == '6' && rx_buf[8] == '3') {
+                                        g_inv_63_cnt++;
+                                        g_inv_last_63_ms = now_tx;
+                                        copy_tx_stripped(g_inv_last_tx_63, sizeof(g_inv_last_tx_63), resp, resp_len);
+                                    } else {
+                                        g_inv_other_cnt++;
+                                    }
                                 } else {
                                     g_inv_other_cnt++;
                                 }
+                                xSemaphoreGive(g_snap_mutex);
                             } else {
-                                g_inv_other_cnt++;
+                                g_inv_mutex_miss++;
                             }
-                            xSemaphoreGive(g_snap_mutex);
-                        } else {
-                            g_inv_mutex_miss++;
-                        }
-                        if (g_raw_log) {
-                            Serial.printf("[INV TX] %s\n", resp);
+                            if (g_raw_log) {
+                                Serial.printf("[INV TX] %s\n", resp);
+                            }
                         }
                     }
-#endif
                     rx_pos = 0;
                 }
             }
@@ -984,6 +1105,546 @@ static void inv_bridge_task(void* arg) {
         vTaskDelay(pdMS_TO_TICKS(2));
     }
 }
+
+#if ENABLE_HA_MQTT
+static WiFiClient g_ha_wifi_client;
+static PubSubClient g_ha_mqtt(g_ha_wifi_client);
+
+struct HaQueuedCmd {
+    char suffix[32];
+    char payload[64];
+};
+static constexpr size_t HA_CMD_QUEUE_CAP = 8u;
+static HaQueuedCmd g_ha_cmd_queue[HA_CMD_QUEUE_CAP];
+static size_t g_ha_cmd_head = 0u;
+static size_t g_ha_cmd_tail = 0u;
+static size_t g_ha_cmd_count = 0u;
+
+static void reset_diag_counters() {
+    if (!g_snap_mutex) return;
+    if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        g_bat_poll_ok = 0u;
+        g_bat_poll_fail = 0u;
+        g_inv_req_count = 0u;
+        g_inv_resp_count = 0u;
+        g_inv_raw_bytes = 0u;
+        g_inhibit_count = 0u;
+        g_delta_v_retry_ok = 0u;
+        g_delta_v_retry_fail = 0u;
+        g_last_inhibit_reason = INHIBIT_NONE;
+        g_last_inhibit_ms = 0u;
+        g_last_inhibit_dv = 0.0f;
+        g_last_inhibit_age_ms = 0u;
+        g_peak_delta_v = 0.0f;
+        g_peak_age_ms = 0u;
+        g_inv_60_cnt = 0u;
+        g_inv_61_cnt = 0u;
+        g_inv_62_cnt = 0u;
+        g_inv_63_cnt = 0u;
+        g_inv_other_cnt = 0u;
+        g_inv_mutex_miss = 0u;
+        g_inv_last_tx_61[0] = '\0';
+        g_inv_last_tx_62[0] = '\0';
+        g_inv_last_tx_63[0] = '\0';
+        g_inv_last_61_ms = 0u;
+        g_inv_last_62_ms = 0u;
+        g_inv_last_63_ms = 0u;
+        xSemaphoreGive(g_snap_mutex);
+    }
+}
+
+static void load_ha_nvs_settings() {
+    Preferences prefs;
+    if (!prefs.begin("shoto_ha", true)) {
+        return;
+    }
+    RuntimePolicyOverride p = default_runtime_policy();
+    p.cvl_v = prefs.getFloat("cvl", p.cvl_v);
+    p.dvl_v = prefs.getFloat("dvl", p.dvl_v);
+    p.ccl_max_a = prefs.getFloat("ccl", p.ccl_max_a);
+    p.dcl_max_a = prefs.getFloat("dcl", p.dcl_max_a);
+    p.max_delta_v = prefs.getFloat("dv", p.max_delta_v);
+    p.modified = prefs.getBool("mod", false);
+    clamp_runtime_policy(p);
+
+    bool dyn_disc = prefs.getBool("dyn_disc", DYNAMIC_PACK_DISCOVERY);
+    bool bridge_act = prefs.getBool("bridge_act", BRIDGE_MODE == MODE_BRIDGE_ACTIVE);
+    bool cell_log = prefs.getBool("cell_log", AUTO_LOG_CELLS);
+    prefs.end();
+
+    if (g_snap_mutex && xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        g_runtime_policy = p;
+        g_dynamic_discovery = dyn_disc;
+        g_bridge_active = bridge_act;
+        g_auto_cell_log = cell_log;
+        xSemaphoreGive(g_snap_mutex);
+    } else {
+        g_runtime_policy = p;
+        g_dynamic_discovery = dyn_disc;
+        g_bridge_active = bridge_act;
+        g_auto_cell_log = cell_log;
+    }
+    Serial.printf("[HA NVS] Loaded policy CVL=%.2fV DVL=%.2fV CCL=%.1fA DCL=%.1fA dV=%.2fV | Bridge=%s Dyn=%s\n",
+                  p.cvl_v, p.dvl_v, p.ccl_max_a, p.dcl_max_a, p.max_delta_v,
+                  bridge_act ? "ACTIVE" : "MONITOR_ONLY",
+                  dyn_disc ? "ON" : "FIXED");
+}
+
+static void save_ha_nvs_settings() {
+    RuntimePolicyOverride p = default_runtime_policy();
+    bool dyn_disc = DYNAMIC_PACK_DISCOVERY;
+    bool bridge_act = (BRIDGE_MODE == MODE_BRIDGE_ACTIVE);
+    bool cell_log = AUTO_LOG_CELLS;
+
+    if (g_snap_mutex && xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+        p = g_runtime_policy;
+        dyn_disc = g_dynamic_discovery;
+        bridge_act = g_bridge_active;
+        cell_log = g_auto_cell_log;
+        xSemaphoreGive(g_snap_mutex);
+    }
+    clamp_runtime_policy(p);
+
+    Preferences prefs;
+    if (!prefs.begin("shoto_ha", false)) {
+        Serial.println("[HA NVS] Gagal membuka namespace shoto_ha untuk tulis!");
+        return;
+    }
+    prefs.putFloat("cvl", p.cvl_v);
+    prefs.putFloat("dvl", p.dvl_v);
+    prefs.putFloat("ccl", p.ccl_max_a);
+    prefs.putFloat("dcl", p.dcl_max_a);
+    prefs.putFloat("dv", p.max_delta_v);
+    prefs.putBool("mod", p.modified);
+    prefs.putBool("dyn_disc", dyn_disc);
+    prefs.putBool("bridge_act", bridge_act);
+    prefs.putBool("cell_log", cell_log);
+    prefs.end();
+}
+
+static void ha_mqtt_callback(char* topic, uint8_t* payload, unsigned int length) {
+    if (!topic) return;
+    static constexpr const char kCmdInfix[] = "/cmd/";
+    const size_t pfx_len = std::strlen(MQTT_TOPIC_PREFIX);
+    if (std::strncmp(topic, MQTT_TOPIC_PREFIX, pfx_len) != 0) return;
+    if (std::strncmp(topic + pfx_len, kCmdInfix, sizeof(kCmdInfix) - 1u) != 0) return;
+    const char* suffix = topic + pfx_len + (sizeof(kCmdInfix) - 1u);
+    if (!suffix[0]) return;
+    if (g_ha_cmd_count >= HA_CMD_QUEUE_CAP) return;
+
+    size_t slen = std::strlen(suffix);
+    HaQueuedCmd& slot = g_ha_cmd_queue[g_ha_cmd_tail];
+    if (slen >= sizeof(slot.suffix)) return;
+    std::memcpy(slot.suffix, suffix, slen + 1u);
+
+    size_t plen = (length < (sizeof(slot.payload) - 1u))
+        ? static_cast<size_t>(length)
+        : (sizeof(slot.payload) - 1u);
+    if (payload && plen > 0u) std::memcpy(slot.payload, payload, plen);
+    slot.payload[plen] = '\0';
+
+    g_ha_cmd_tail = (g_ha_cmd_tail + 1u) % HA_CMD_QUEUE_CAP;
+    g_ha_cmd_count++;
+}
+
+static void ha_mqtt_task(void* arg) {
+    (void)arg;
+    esp_task_wdt_add(nullptr);
+
+    static char topic_buf[160];
+    static char payload_buf[1600];
+    char lwt_topic[128];
+    char cmd_sub_topic[128];
+    char client_id[64];
+    std::snprintf(lwt_topic, sizeof(lwt_topic), "%s/status", MQTT_TOPIC_PREFIX);
+    std::snprintf(cmd_sub_topic, sizeof(cmd_sub_topic), "%s/cmd/+", MQTT_TOPIC_PREFIX);
+    std::snprintf(client_id, sizeof(client_id), "%s_esp32", HA_DEVICE_ID);
+
+    const bool has_real_secrets =
+        (std::strncmp(WIFI_SSID, "GANTI_", 6) != 0) && (WIFI_SSID[0] != '\0');
+    if (!has_real_secrets) {
+        Serial.println("[HA WARN] secrets.h belum dibuat atau WIFI_SSID masih placeholder ('GANTI_...'). HA MQTT idle.");
+        for (;;) {
+            esp_task_wdt_reset();
+            vTaskDelay(pdMS_TO_TICKS(5000));
+        }
+    }
+
+    WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
+    WiFi.persistent(false);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+    g_ha_mqtt.setServer(MQTT_HOST, MQTT_PORT);
+    g_ha_mqtt.setBufferSize(1600);
+    g_ha_mqtt.setSocketTimeout(2);
+    g_ha_mqtt.setCallback(ha_mqtt_callback);
+
+    bool ota_initialized = false;
+    bool has_connected_once = false;
+    uint32_t wifi_backoff_ms = 5000UL;
+    uint32_t last_wifi_attempt_ms = millis();
+    uint32_t mqtt_backoff_ms = 5000UL;
+    uint32_t last_mqtt_attempt_ms = 0u;
+
+    const size_t disc_total = ha_discovery_entity_count(MAX_PACKS);
+    size_t disc_cursor = 0u;
+    uint32_t last_telem_pub_ms = 0u;
+    uint32_t last_cells_pub_ms = 0u;
+    uint32_t last_pub_eeprom_ms[MAX_PACKS] = {0u, 0u, 0u, 0u};
+    bool force_state_pub = true;
+    bool force_cells_pub = true;
+    bool force_eeprom_pub = true;
+
+    for (;;) {
+        esp_task_wdt_reset();
+
+        // Check Maintenance Unlock 5-minute auto-relock even if Wi-Fi/MQTT is down
+        bool auto_relocked = false;
+        if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            if (g_maint_unlock && (millis() - g_maint_unlock_ms) >= HA_MAINT_UNLOCK_TIMEOUT_MS) {
+                g_maint_unlock = false;
+                g_maint_unlock_ms = 0u;
+                auto_relocked = true;
+            }
+            xSemaphoreGive(g_snap_mutex);
+        }
+        if (auto_relocked) {
+            Serial.println("[HA] Maintenance Unlock auto-relocked (timeout)");
+            force_state_pub = true;
+        }
+
+        if (WiFi.status() != WL_CONNECTED) {
+            if ((millis() - last_wifi_attempt_ms) >= wifi_backoff_ms) {
+                last_wifi_attempt_ms = millis();
+                WiFi.disconnect(false);
+                WiFi.begin(WIFI_SSID, WIFI_PASS);
+                wifi_backoff_ms = std::min<uint32_t>(wifi_backoff_ms * 2u, 30000UL);
+            }
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+        wifi_backoff_ms = 5000UL;
+
+        if (!ota_initialized) {
+            ArduinoOTA.setHostname(HA_DEVICE_ID);
+            if (OTA_PASS[0] != '\0') {
+                ArduinoOTA.setPassword(OTA_PASS);
+            }
+            ArduinoOTA.begin();
+            ota_initialized = true;
+        }
+        ArduinoOTA.handle();
+
+        if (!g_ha_mqtt.connected()) {
+            if ((last_mqtt_attempt_ms == 0u) || ((millis() - last_mqtt_attempt_ms) >= mqtt_backoff_ms)) {
+                last_mqtt_attempt_ms = millis();
+                esp_task_wdt_reset();
+                bool ok = (MQTT_USER[0] != '\0')
+                    ? g_ha_mqtt.connect(client_id, MQTT_USER, MQTT_PASS, lwt_topic, 0, true, "offline")
+                    : g_ha_mqtt.connect(client_id, lwt_topic, 0, true, "offline");
+                esp_task_wdt_reset();
+                if (ok) {
+                    mqtt_backoff_ms = 5000UL;
+                    if (has_connected_once) g_mqtt_reconnects++;
+                    has_connected_once = true;
+                    g_ha_mqtt.publish(lwt_topic, "online", true);
+                    g_ha_mqtt.subscribe(cmd_sub_topic);
+                    disc_cursor = 0u;
+                    force_state_pub = true;
+                    force_cells_pub = true;
+                    force_eeprom_pub = true;
+                    Serial.printf("[HA MQTT] Connected to %s:%u\n", MQTT_HOST, static_cast<unsigned>(MQTT_PORT));
+                } else {
+                    mqtt_backoff_ms = std::min<uint32_t>(mqtt_backoff_ms * 2u, 30000UL);
+                    Serial.printf("[HA MQTT] Connect failed rc=%d (retry %lums)\n",
+                                  g_ha_mqtt.state(), static_cast<unsigned long>(mqtt_backoff_ms));
+                }
+            }
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
+
+        g_ha_mqtt.loop();
+
+        // Drain queued MQTT commands (no mutex held across network/NVS)
+        bool need_nvs_save = false;
+        while (g_ha_cmd_count > 0u) {
+            HaQueuedCmd item = g_ha_cmd_queue[g_ha_cmd_head];
+            g_ha_cmd_head = (g_ha_cmd_head + 1u) % HA_CMD_QUEUE_CAP;
+            g_ha_cmd_count--;
+
+            bool maint_unlocked = false;
+            if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                maint_unlocked = g_maint_unlock;
+                xSemaphoreGive(g_snap_mutex);
+            }
+
+            HaActionCmd cmd{};
+            if (!parse_ha_command(item.suffix, item.payload, maint_unlocked, cmd)) {
+                if (cmd.type == HA_ACT_DENIED_LOCKED) {
+                    Serial.printf("[HA CMD] DENIED: locked (%s)\n", item.suffix);
+                } else {
+                    Serial.printf("[HA CMD] INVALID (%s=%s)\n", item.suffix, item.payload);
+                }
+                force_state_pub = true;
+                continue;
+            }
+
+            switch (cmd.type) {
+                case HA_ACT_RESCAN:
+                    g_force_rescan_packs = true;
+                    Serial.println("[HA CMD] Rescan packs triggered");
+                    break;
+                case HA_ACT_AUDIT_EEPROM:
+                    queue_param_audit_slot(cmd.u8_val);
+                    Serial.printf("[HA CMD] Audit EEPROM queued (target=%u)\n", static_cast<unsigned>(cmd.u8_val));
+                    break;
+                case HA_ACT_RESET_DIAG:
+                    reset_diag_counters();
+                    Serial.println("[HA CMD] Diag counters reset");
+                    break;
+                case HA_ACT_REPUBLISH_DISCOVERY:
+                    disc_cursor = 0u;
+                    Serial.println("[HA CMD] Republishing HA discovery...");
+                    break;
+                case HA_ACT_RESTART:
+                    Serial.println("[HA CMD] Restarting ESP32...");
+                    g_ha_mqtt.publish(lwt_topic, "offline", true);
+                    g_ha_mqtt.loop();
+                    vTaskDelay(pdMS_TO_TICKS(200));
+                    ESP.restart();
+                    break;
+                case HA_ACT_SET_CELL_LOG:
+                    if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+                        g_auto_cell_log = cmd.bool_val;
+                        xSemaphoreGive(g_snap_mutex);
+                    }
+                    need_nvs_save = true;
+                    break;
+                case HA_ACT_SET_MAINT_UNLOCK:
+                    if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+                        g_maint_unlock = cmd.bool_val;
+                        g_maint_unlock_ms = cmd.bool_val ? millis() : 0u;
+                        xSemaphoreGive(g_snap_mutex);
+                    }
+                    Serial.printf("[HA CMD] Maintenance Unlock -> %s\n", cmd.bool_val ? "ON" : "OFF");
+                    break;
+                case HA_ACT_SET_DYN_DISCOVERY:
+                    if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+                        g_dynamic_discovery = cmd.bool_val;
+                        xSemaphoreGive(g_snap_mutex);
+                    }
+                    need_nvs_save = true;
+                    break;
+                case HA_ACT_SET_BRIDGE_MODE:
+                    if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+                        g_bridge_active = cmd.bool_val;
+                        xSemaphoreGive(g_snap_mutex);
+                    }
+                    need_nvs_save = true;
+                    Serial.printf("[HA CMD] Bridge Mode -> %s\n", cmd.bool_val ? "ACTIVE" : "MONITOR_ONLY");
+                    break;
+                case HA_ACT_SET_CVL:
+                case HA_ACT_SET_DVL:
+                case HA_ACT_SET_CCL:
+                case HA_ACT_SET_DCL:
+                case HA_ACT_SET_MAX_DV:
+                    if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+                        if (cmd.type == HA_ACT_SET_CVL) g_runtime_policy.cvl_v = cmd.float_val;
+                        else if (cmd.type == HA_ACT_SET_DVL) g_runtime_policy.dvl_v = cmd.float_val;
+                        else if (cmd.type == HA_ACT_SET_CCL) g_runtime_policy.ccl_max_a = cmd.float_val;
+                        else if (cmd.type == HA_ACT_SET_DCL) g_runtime_policy.dcl_max_a = cmd.float_val;
+                        else if (cmd.type == HA_ACT_SET_MAX_DV) g_runtime_policy.max_delta_v = cmd.float_val;
+                        g_runtime_policy.modified = true;
+                        clamp_runtime_policy(g_runtime_policy);
+                        xSemaphoreGive(g_snap_mutex);
+                    }
+                    need_nvs_save = true;
+                    break;
+                case HA_ACT_RESET_POLICY:
+                    if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+                        g_runtime_policy = default_runtime_policy();
+                        xSemaphoreGive(g_snap_mutex);
+                    }
+                    need_nvs_save = true;
+                    Serial.println("[HA CMD] Runtime policy reset to 15S LFP defaults");
+                    break;
+                default:
+                    break;
+            }
+            force_state_pub = true;
+        }
+        if (need_nvs_save) {
+            save_ha_nvs_settings();
+        }
+
+        // Iterative discovery (max 2 entities per loop so WDT & higher-prio tasks never starve)
+        for (uint8_t step = 0u; step < 2u && disc_cursor < disc_total; ++step) {
+            if (build_ha_discovery_payload(
+                    disc_cursor, MAX_PACKS, HA_DEVICE_ID, HA_SITE_NAME,
+                    MQTT_TOPIC_PREFIX, SW_VERSION,
+                    topic_buf, sizeof(topic_buf), payload_buf, sizeof(payload_buf))) {
+                if (!g_ha_mqtt.publish(topic_buf, payload_buf, true)) {
+                    break;
+                }
+            }
+            disc_cursor++;
+        }
+
+        const uint32_t now_ms = millis();
+        const bool due_telem = force_state_pub || (last_telem_pub_ms == 0u) ||
+                               ((now_ms - last_telem_pub_ms) >= HA_TELEMETRY_INTERVAL_MS);
+        const bool due_cells = force_cells_pub || (last_cells_pub_ms == 0u) ||
+                               ((now_ms - last_cells_pub_ms) >= HA_CELLS_INTERVAL_MS);
+        const bool eep_dirty = g_ha_eeprom_dirty || force_eeprom_pub;
+
+        if (due_telem || due_cells || eep_dirty) {
+            BankExt bank_snap{};
+            PackState packs_snap[MAX_PACKS]{};
+            bool online_snap[MAX_PACKS]{};
+            uint8_t miss_snap[MAX_PACKS]{};
+            PackEepromSnapshot eep_snap[MAX_PACKS]{};
+            HaDiagSnapshot diag_snap{};
+            InhibitReason last_inh = INHIBIT_NONE;
+            bool dyn_disc = DYNAMIC_PACK_DISCOVERY;
+            bool bridge_act = (BRIDGE_MODE == MODE_BRIDGE_ACTIVE);
+            bool maint_unl = false;
+            uint32_t maint_ms = 0u;
+            RuntimePolicyOverride pol_snap = default_runtime_policy();
+
+            bool copied = false;
+            if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+                bank_snap = g_bank;
+                for (uint8_t i = 0u; i < MAX_PACKS; ++i) {
+                    packs_snap[i] = g_packs[i];
+                    online_snap[i] = g_pack_online[i];
+                    miss_snap[i] = g_pack_miss[i];
+                    eep_snap[i] = g_pack_eeprom[i];
+                }
+                last_inh = g_last_inhibit_reason;
+                dyn_disc = g_dynamic_discovery;
+                bridge_act = g_bridge_active;
+                maint_unl = g_maint_unlock;
+                maint_ms = g_maint_unlock_ms;
+                pol_snap = g_runtime_policy;
+
+                diag_snap.proto = g_active_proto;
+                diag_snap.cell_log = g_auto_cell_log;
+                diag_snap.bat_poll_ok = g_bat_poll_ok;
+                diag_snap.bat_poll_fail = g_bat_poll_fail;
+                diag_snap.inv_req_count = g_inv_req_count;
+                diag_snap.inv_resp_count = g_inv_resp_count;
+                diag_snap.inv_raw_bytes = g_inv_raw_bytes;
+                diag_snap.inhibit_count = g_inhibit_count;
+                diag_snap.dv_retry_ok = g_delta_v_retry_ok;
+                diag_snap.dv_retry_fail = g_delta_v_retry_fail;
+                diag_snap.last_inhibit_reason = g_last_inhibit_reason;
+                diag_snap.last_inhibit_age_ms = (g_last_inhibit_ms > 0u) ? (now_ms - g_last_inhibit_ms) : 0u;
+                diag_snap.last_inhibit_dv = g_last_inhibit_dv;
+                diag_snap.peak_dv = g_peak_delta_v;
+                diag_snap.peak_age_ms = g_peak_age_ms;
+                diag_snap.inv_60 = g_inv_60_cnt;
+                diag_snap.inv_61 = g_inv_61_cnt;
+                diag_snap.inv_62 = g_inv_62_cnt;
+                diag_snap.inv_63 = g_inv_63_cnt;
+                diag_snap.inv_other = g_inv_other_cnt;
+                diag_snap.inv_mtx_miss = g_inv_mutex_miss;
+                std::memcpy(diag_snap.tx61, g_inv_last_tx_61, sizeof(diag_snap.tx61));
+                std::memcpy(diag_snap.tx62, g_inv_last_tx_62, sizeof(diag_snap.tx62));
+                std::memcpy(diag_snap.tx63, g_inv_last_tx_63, sizeof(diag_snap.tx63));
+                diag_snap.tx61_age_ms = (g_inv_last_61_ms > 0u) ? (now_ms - g_inv_last_61_ms) : 0u;
+                diag_snap.tx62_age_ms = (g_inv_last_62_ms > 0u) ? (now_ms - g_inv_last_62_ms) : 0u;
+                diag_snap.tx63_age_ms = (g_inv_last_63_ms > 0u) ? (now_ms - g_inv_last_63_ms) : 0u;
+                g_ha_eeprom_dirty = false;
+                copied = true;
+                xSemaphoreGive(g_snap_mutex);
+            }
+
+            if (copied) {
+                uint32_t maint_rem_s = 0u;
+                if (maint_unl) {
+                    uint32_t elapsed = now_ms - maint_ms;
+                    if (elapsed < HA_MAINT_UNLOCK_TIMEOUT_MS) {
+                        maint_rem_s = (HA_MAINT_UNLOCK_TIMEOUT_MS - elapsed + 999UL) / 1000UL;
+                    }
+                }
+
+                if (due_telem) {
+                    last_telem_pub_ms = now_ms;
+                    force_state_pub = false;
+
+                    if (build_bank_state_json(bank_snap, last_inh, dyn_disc, bridge_act,
+                                              maint_unl, maint_rem_s, pol_snap,
+                                              payload_buf, sizeof(payload_buf)) > 0u) {
+                        std::snprintf(topic_buf, sizeof(topic_buf), "%s/bank", MQTT_TOPIC_PREFIX);
+                        g_ha_mqtt.publish(topic_buf, payload_buf, false);
+                    }
+
+                    HaSystemHealth sys{};
+                    sys.wifi_rssi_dbm = static_cast<int32_t>(WiFi.RSSI());
+                    sys.free_heap_bytes = ESP.getFreeHeap();
+                    sys.min_free_heap_bytes = ESP.getMinFreeHeap();
+                    sys.uptime_s = now_ms / 1000UL;
+                    sys.mqtt_reconnects = g_mqtt_reconnects;
+                    IPAddress ip = WiFi.localIP();
+                    std::snprintf(sys.ip_addr, sizeof(sys.ip_addr), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+
+                    if (build_diag_state_json(diag_snap, sys, payload_buf, sizeof(payload_buf)) > 0u) {
+                        std::snprintf(topic_buf, sizeof(topic_buf), "%s/diag", MQTT_TOPIC_PREFIX);
+                        g_ha_mqtt.publish(topic_buf, payload_buf, false);
+                    }
+
+                    for (uint8_t slot = 0u; slot < MAX_PACKS; ++slot) {
+                        uint32_t age_ms = (online_snap[slot] && packs_snap[slot].core.complete)
+                            ? (now_ms - packs_snap[slot].core.sampled_ms)
+                            : 0u;
+                        if (build_pack_state_json(static_cast<uint8_t>(slot + 1u), online_snap[slot],
+                                                  packs_snap[slot], age_ms, miss_snap[slot],
+                                                  payload_buf, sizeof(payload_buf)) > 0u) {
+                            std::snprintf(topic_buf, sizeof(topic_buf), "%s/pack%u/state",
+                                          MQTT_TOPIC_PREFIX, static_cast<unsigned>(slot + 1u));
+                            g_ha_mqtt.publish(topic_buf, payload_buf, false);
+                        }
+                    }
+                }
+
+                if (due_cells) {
+                    last_cells_pub_ms = now_ms;
+                    force_cells_pub = false;
+                    for (uint8_t slot = 0u; slot < MAX_PACKS; ++slot) {
+                        if (!online_snap[slot] || packs_snap[slot].ext.cell_count == 0u) continue;
+                        if (build_pack_cells_json(packs_snap[slot], payload_buf, sizeof(payload_buf)) > 0u) {
+                            std::snprintf(topic_buf, sizeof(topic_buf), "%s/pack%u/cells",
+                                          MQTT_TOPIC_PREFIX, static_cast<unsigned>(slot + 1u));
+                            g_ha_mqtt.publish(topic_buf, payload_buf, false);
+                        }
+                    }
+                }
+
+                if (eep_dirty) {
+                    force_eeprom_pub = false;
+                    for (uint8_t slot = 0u; slot < MAX_PACKS; ++slot) {
+                        if (!eep_snap[slot].valid) continue;
+                        if (eep_snap[slot].audited_ms != last_pub_eeprom_ms[slot] ||
+                            last_pub_eeprom_ms[slot] == 0u) {
+                            if (build_pack_eeprom_json(eep_snap[slot], payload_buf, sizeof(payload_buf)) > 0u) {
+                                std::snprintf(topic_buf, sizeof(topic_buf), "%s/pack%u/eeprom",
+                                              MQTT_TOPIC_PREFIX, static_cast<unsigned>(slot + 1u));
+                                if (g_ha_mqtt.publish(topic_buf, payload_buf, true)) {
+                                    last_pub_eeprom_ms[slot] = eep_snap[slot].audited_ms;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+#endif
 
 static void handle_serial_cli() {
     static char cmd_buf[48];
@@ -999,6 +1660,8 @@ static void handle_serial_cli() {
             PackState ps_snap[MAX_PACKS]{};
             bool online_snap[MAX_PACKS]{};
             uint8_t miss_snap[MAX_PACKS]{};
+            bool dyn_disc_snap = g_dynamic_discovery;
+            bool bridge_active_snap = g_bridge_active;
             struct DiagSnap {
                 uint32_t inhibit_count;
                 uint32_t dv_retry_ok;
@@ -1025,6 +1688,8 @@ static void handle_serial_cli() {
             DiagSnap dsnap = {};
             if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
                 snap = g_bank;
+                dyn_disc_snap = g_dynamic_discovery;
+                bridge_active_snap = g_bridge_active;
                 for (uint8_t i = 0; i < MAX_PACKS; ++i) {
                     ps_snap[i] = g_packs[i];
                     online_snap[i] = g_pack_online[i];
@@ -1057,9 +1722,9 @@ static void handle_serial_cli() {
             if (std::strcmp(cmd_buf, "status") == 0) {
                 Serial.printf("Proto=%s | Bridge=%s | PolicyApproved=%s | DynDiscovery=%s | Packs=%u/%u | BankValid=%s\n",
                               proto_name(g_active_proto),
-                              BRIDGE_MODE == MODE_BRIDGE_ACTIVE ? "ACTIVE" : "MONITOR_ONLY",
+                              bridge_active_snap ? "ACTIVE" : "MONITOR_ONLY",
                               POLICY_USER_APPROVED ? "YES" : "NO",
-                              g_dynamic_discovery ? "ON" : "FIXED",
+                              dyn_disc_snap ? "ON" : "FIXED",
                               snap.pack_count, static_cast<unsigned>(MAX_PACKS),
                               snap.core.valid ? "YES" : "INHIBIT");
                 Serial.printf("Bank: V=%.2fV I=%.2fA SOC=%.1f%% (rawSOC=%.1f%%) SOH=%.1f%% CVL=%.2fV DVL=%.2fV CCL=%.1fA DCL=%.1fA | ok=%lu err=%lu minC=%umV maxC=%umV\n",
@@ -1137,7 +1802,7 @@ static void handle_serial_cli() {
                               dsnap.tx61[0] ? dsnap.tx61 : "<none>");
             } else if (std::strcmp(cmd_buf, "packs") == 0) {
                 Serial.printf("DynDiscovery=%s | ActivePacks=%u/%u | BankValid=%s | Cap=%.0fAh CCL=%.1fA DCL=%.1fA\n",
-                              g_dynamic_discovery ? "ON" : "FIXED",
+                              dyn_disc_snap ? "ON" : "FIXED",
                               snap.pack_count, static_cast<unsigned>(MAX_PACKS),
                               snap.core.valid ? "YES" : "INHIBIT",
                               snap.core.capacity_ah, snap.core.ccl, snap.core.dcl);
@@ -1179,10 +1844,19 @@ static void handle_serial_cli() {
                 g_active_proto = PROTO_AUTO;
                 Serial.println("Memicu ulang auto-detect protokol Shoto...");
             } else if (std::strcmp(cmd_buf, "params") == 0) {
-                g_dump_params = true;
-                Serial.println("[PARAM] Audit parameter read-only Shoto dijadwalkan pada siklus Core 0 berikutnya...");
+                queue_param_audit_first_online();
+                Serial.println("[PARAM] Audit parameter read-only Shoto (pack online pertama) dijadwalkan pada siklus Core 0 berikutnya...");
+            } else if (std::strcmp(cmd_buf, "params all") == 0) {
+                queue_param_audit_slot(0u);
+                Serial.println("[PARAM] Audit parameter read-only Shoto (semua pack online, 1 pack/siklus) dijadwalkan...");
+            } else if (std::strncmp(cmd_buf, "params ", 7) == 0 &&
+                       cmd_buf[7] >= '1' && cmd_buf[7] <= '4' && cmd_buf[8] == '\0') {
+                uint8_t slot_1based = static_cast<uint8_t>(cmd_buf[7] - '0');
+                queue_param_audit_slot(slot_1based);
+                Serial.printf("[PARAM] Audit parameter read-only Shoto Pack#%u dijadwalkan pada siklus Core 0 berikutnya...\n",
+                              static_cast<unsigned>(slot_1based));
             } else {
-                Serial.println("Perintah: status | diag | packs | rescan | cells | celllog | raw | batraw | scan | params | help");
+                Serial.println("Perintah: status | diag | packs | rescan | cells | celllog | raw | batraw | scan | params [1..4|all] | help");
             }
         } else if (pos < sizeof(cmd_buf) - 1) {
             cmd_buf[pos++] = c;
@@ -1193,14 +1867,6 @@ static void handle_serial_cli() {
 void setup() {
     Serial.begin(115200);
     delay(400);
-    Serial.println("\n=== SHOTO <-> SAMOTO BMS BRIDGE v3.0 ===");
-    Serial.printf("Mode=%s | PolicyApproved=%s | Proto=%s | DynDiscovery=%s | MaxPacks=%d | FixedPacks=%d\n",
-                  BRIDGE_MODE == MODE_BRIDGE_ACTIVE ? "ACTIVE" : "MONITOR_ONLY",
-                  POLICY_USER_APPROVED ? "YES" : "NO",
-                  proto_name(g_active_proto),
-                  g_dynamic_discovery ? "ON" : "FIXED",
-                  static_cast<int>(MAX_PACKS),
-                  FIXED_PACK_COUNT);
 
 #if BAT_DE_PIN >= 0
     pinMode(BAT_DE_PIN, OUTPUT);
@@ -1210,6 +1876,20 @@ void setup() {
     InvSerial.begin(INVERTER_BAUD, SERIAL_8N1, INV_RX_PIN, INV_TX_PIN);
 
     g_snap_mutex = xSemaphoreCreateMutex();
+#if ENABLE_HA_MQTT
+    load_ha_nvs_settings();
+#endif
+
+    Serial.println("\n=== SHOTO <-> SAMOTO BMS BRIDGE v3.1 ===");
+    Serial.printf("Mode=%s | PolicyApproved=%s | Proto=%s | DynDiscovery=%s | MaxPacks=%d | FixedPacks=%d | HA_MQTT=%d\n",
+                  g_bridge_active ? "ACTIVE" : "MONITOR_ONLY",
+                  POLICY_USER_APPROVED ? "YES" : "NO",
+                  proto_name(g_active_proto),
+                  g_dynamic_discovery ? "ON" : "FIXED",
+                  static_cast<int>(MAX_PACKS),
+                  FIXED_PACK_COUNT,
+                  static_cast<int>(ENABLE_HA_MQTT));
+
 #if defined(ESP_IDF_VERSION) && ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
     esp_task_wdt_config_t wdt_cfg = {};
     wdt_cfg.timeout_ms = 10000;
@@ -1224,6 +1904,9 @@ void setup() {
 
     xTaskCreatePinnedToCore(bat_poll_task, "bat_poll", 6144, nullptr, 2, nullptr, 0);
     xTaskCreatePinnedToCore(inv_bridge_task, "inv_bridge", 6144, nullptr, 3, nullptr, 1);
+#if ENABLE_HA_MQTT
+    xTaskCreatePinnedToCore(ha_mqtt_task, "ha_mqtt", 8192, nullptr, 1, nullptr, 0);
+#endif
     Serial.println("Ketik 'help' untuk perintah diagnosa.");
 }
 

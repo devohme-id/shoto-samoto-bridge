@@ -71,6 +71,31 @@
 #define POLL_INTERVAL_MS       1500UL  // Interval baca Shoto online setiap 1.5 detik
 #define AUTO_LOG_CELLS         true    // Tampilkan rincian tegangan 15 sel + dV tiap 5 detik di Serial Monitor
 
+// 6. INTEGRASI HOME ASSISTANT (MQTT + Wi-Fi + NVS):
+//    - ENABLE_HA_MQTT = 0 -> Mode bench/offline murni (tidak butuh PubSubClient/secrets.h)
+//    - ENABLE_HA_MQTT = 1 -> Aktifkan task non-blocking ha_mqtt_task (Core 0, prio 1)
+#ifndef ENABLE_HA_MQTT
+  #define ENABLE_HA_MQTT             0
+#endif
+#ifndef HA_DEVICE_ID
+  #define HA_DEVICE_ID               "shoto_ils6300"
+#endif
+#ifndef HA_SITE_NAME
+  #define HA_SITE_NAME               "PLTS Samoto ILS6300"
+#endif
+#ifndef MQTT_TOPIC_PREFIX
+  #define MQTT_TOPIC_PREFIX          "shoto_bridge/ils6300"
+#endif
+#ifndef HA_TELEMETRY_INTERVAL_MS
+  #define HA_TELEMETRY_INTERVAL_MS   3000UL
+#endif
+#ifndef HA_CELLS_INTERVAL_MS
+  #define HA_CELLS_INTERVAL_MS       5000UL
+#endif
+#ifndef HA_MAINT_UNLOCK_TIMEOUT_MS
+  #define HA_MAINT_UNLOCK_TIMEOUT_MS 300000UL
+#endif
+
 // -------------------- Pemetaan Pin Hardware (otomatis) --------------------
 #ifdef BOARD_WAVESHARE_S3
   #define BAT_UART_NUM       1

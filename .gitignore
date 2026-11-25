@@ -1,0 +1,7 @@
+firmware/shoto_samoto_bridge/secrets.h
+homeassistant/.env
+homeassistant/mosquitto/passwd
+/tmp/
+.superpowers/
+.pio/
+__pycache__/
