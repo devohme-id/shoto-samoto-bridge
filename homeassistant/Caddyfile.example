@@ -1,0 +1,25 @@
+# =============================================================================
+# Caddy Reverse Proxy (HTTPS Otomatis Let's Encrypt) — Home Assistant
+# =============================================================================
+# Salin file ini menjadi `Caddyfile` di direktori yang sama dengan `docker-compose.yml`.
+# Pastikan DNS / DuckDNS (`HA_DOMAIN` di `.env`) sudah mengarah ke IP Publik Anda,
+# dan router hanya men-forward port TCP 443 (plus port 80 jika pakai HTTP-01).
+#
+# JANGAN PERNAH mengekspos port 8123, 1883 (MQTT), atau 22 (SSH) melalui proxy publik!
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$HA_DOMAIN} {
+	# Caddy v2 otomatis meneruskan WebSocket (wajib untuk UI & Companion App HA)
+	# serta header X-Forwarded-For / X-Forwarded-Proto ke container internal.
+	reverse_proxy homeassistant:8123
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}

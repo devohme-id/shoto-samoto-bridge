@@ -1,0 +1,61 @@
+# =============================================================================
+# Docker Compose Mini PC — Home Assistant + Mosquitto (LAN) + Caddy (HTTPS)
+# =============================================================================
+# Langkah pakai (Opsi B di Ubuntu/Debian Server):
+#   1. Salin `.env.example` menjadi `.env` dan isi domain + timezone Anda.
+#   2. Salin `Caddyfile.example` menjadi `Caddyfile`.
+#   3. Buat file user MQTT `mosquitto/passwd` (lihat petunjuk di `mosquitto/mosquitto.conf`).
+#   4. Jalankan: `docker compose up -d`
+
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: shoto-homeassistant
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-Asia/Jakarta}
+    volumes:
+      - ./ha_config:/config
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      # Default hanya listen di loopback (127.0.0.1) agar akses luar wajib via Caddy HTTPS.
+      # Untuk akses lokal LAN (http://192.168.1.50:8123), isi HA_BIND_IP=192.168.1.50 di `.env`.
+      # JANGAN PERNAH port-forward port 8123 di router ISP ke internet!
+      - "${HA_BIND_IP:-127.0.0.1}:8123:8123"
+    depends_on:
+      - mosquitto
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: shoto-mosquitto
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-Asia/Jakarta}
+    ports:
+      # Port 1883 hanya untuk ESP32 Bridge di jaringan Wi-Fi/LAN lokal.
+      # JANGAN PERNAH port-forward port 1883 di router ISP atau diproxy oleh Caddy!
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/passwd:/mosquitto/config/passwd:ro
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: shoto-caddy
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-Asia/Jakarta}
+      - HA_DOMAIN=${HA_DOMAIN}
+      - ACME_EMAIL=${ACME_EMAIL}
+    ports:
+      # Hanya buka port HTTPS 443 (dan HTTP 80 untuk verifikasi sertifikat Let's Encrypt).
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/data:/data
+      - ./caddy/config:/config
+    depends_on:
+      - homeassistant

@@ -1,0 +1,58 @@
+# =============================================================================
+# Konfigurasi Referensi Home Assistant — PLTS Samoto ILS6300 & Shoto BMS
+# =============================================================================
+# Untuk pengguna HAOS (Opsi A): gabungkan blok `http:` dan `recorder:` di bawah
+# ke file `/config/configuration.yaml` melalui add-on File Editor / Studio Code.
+# Untuk pengguna Docker Compose (Opsi B): salin ke `./ha_config/configuration.yaml`.
+
+default_config:
+
+# Load komponen frontend bawaan Home Assistant (termasuk tema & Lovelace UI).
+frontend:
+
+# =============================================================================
+# Keamanan Reverse Proxy & Proteksi Brute-Force Internet
+# =============================================================================
+# Wajib aktif jika Home Assistant diakses lewat HTTPS (Nginx Proxy Manager / Caddy).
+http:
+  use_x_forwarded_for: true
+  trusted_proxies:
+    - 127.0.0.1
+    - "::1"
+    - 172.30.33.0/24   # Subnet internal Add-on HAOS (termasuk Nginx Proxy Manager)
+    - 172.16.0.0/12    # Subnet internal Docker Bridge (jika pakai Opsi B Docker Compose)
+    - 192.168.1.50     # Ganti dengan IP LAN Mini PC Anda jika berbeda
+  ip_ban_enabled: true
+  login_attempts_threshold: 5
+
+# =============================================================================
+# Optimasi Recorder untuk SSD Mini PC (Awet 24/7)
+# =============================================================================
+# Menyimpan histori 30 hari untuk bank, pack, 15 sel, suhu, dan audit EEPROM,
+# sambil mengurangi write SSD lewat commit_interval dan mengecualikan frame
+# hex TX mentah berfrekuensi tinggi.
+recorder:
+  purge_keep_days: 30
+  commit_interval: 15
+  exclude:
+    entity_globs:
+      - sensor.*_diag_tx61
+      - sensor.*_diag_tx62
+      - sensor.*_diag_tx63
+
+# =============================================================================
+# File Otomasi, Script & Dashboard Shoto BMS
+# =============================================================================
+# Standar bawaan HA agar boot pertama bersih sebelum file Shoto disalin:
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+# Panduan pemasangan file lanjutan dari folder homeassistant/:
+# 1. Dashboard 4 tampilan: salin isi `homeassistant/dashboards/shoto_bms_dashboard.yaml`
+#    ke Home Assistant UI (Settings -> Dashboards -> Raw configuration editor).
+# 2. Otomasi & Script notifikasi HP: salin isi `homeassistant/automations_shoto_bms.yaml`
+#    ke `automations.yaml` dan `homeassistant/scripts_shoto_bms.yaml` ke `scripts.yaml`
+#    (atau aktifkan named include jika dipisah sebagai file tersendiri):
+#      automation shoto_bms: !include automations_shoto_bms.yaml
+#      script shoto_bms: !include scripts_shoto_bms.yaml
