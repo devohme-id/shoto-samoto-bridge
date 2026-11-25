@@ -1,9 +1,9 @@
 # PROJECT CONTEXT: Shoto SmartLi / SD-BA430 ↔ Samoto ILS3600 / IHF6200 BMS Bridge
 
 > **Jenis Dokumen:** Konteks Global & *Single Source of Truth* Proyek (untuk pengembangan jangka panjang & sinkronisasi antar-sesi).  
-> **Baseline Codebase:** Git Commit [`c06ed15`](firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino) + Hardening 3-Pack `IHF6200` (`DCL 120A`, retry `delta_V`, CLI `diag` — `2026-11-24`)  
-> **Tanggal Pembaruan Konteks:** `2026-11-24`  
-> **Status Proyek:** **3-Pack Cascade (`addr=1,2,3`, `300 Ah`) + Samoto `IHF6200` (`Menu 05 = PYL`, `PYL_FULL`) Terverifikasi Live (`49,78 V / 79,0% SOC`, `err=0`, `inhibit=0`)** · **Cloud Monitoring `solar.siseli.com` Terverifikasi 1:1** · **Dokumentasi Rujukan: [`ISSUE_REPORT_2026-11-24.md`](ISSUE_REPORT_2026-11-24.md) & [`GLOSSARY.md`](GLOSSARY.md)**.
+> **Baseline Codebase:** Git Commit [`c06ed15`](firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino) (`main`) + Branch `feat/home-assistant-integration` (`v3.1.0`, baseline `4fae5e6` + update `PROJECT_CONTEXT.md`)  
+> **Tanggal Pembaruan Konteks:** `2026-11-25`  
+> **Status Proyek:** **3-Pack Cascade (`addr=1,2,3`, `300 Ah`) + Samoto `IHF6200` (`Menu 05 = PYL`, `PYL_FULL`) Terverifikasi Live (`49,78 V / 79,0% SOC`, `err=0`, `inhibit=0`)** · **Cloud Monitoring `solar.siseli.com` Terverifikasi 1:1** · **Integrasi Home Assistant + MQTT (`212` entitas) HOST-VERIFIED (C++17/11, 26 Python tests, 9 stub build `.ino`), PENDING LIVE DEPLOYMENT di Mini PC & ESP32** · **Rujukan: [`ISSUE_REPORT_2026-11-24.md`](ISSUE_REPORT_2026-11-24.md), [`GLOSSARY.md`](GLOSSARY.md), [`GUIDE-HOME-ASSISTANT.md`](GUIDE-HOME-ASSISTANT.md)**.
 
 ---
 
@@ -45,21 +45,37 @@ Proyek ini adalah **jembatan protokol BMS dual-UART berbasis ESP32 FreeRTOS** (*
 
 ### 1.3 Arsitektur FreeRTOS & Concurrency (`shoto_samoto_bridge.ino`)
 * **Core 0 (`bat_poll_task`, stack `6144`, priority `2`):**
-  * Mengelola deteksi protokol (`PROTO_AUTO` / `run_autodetect()`), pembacaan pack `1..4`, mekanisme hot-plug/hot-unplug, penskalaan dinamis (`compute_dynamic_caps()`), agregasi & gating safety (`aggregate_bank()`), serta pencatatan log periodik 5 detik (`[BAT ...]` & `[CELLS P# ...]`).
+  * Mengelola deteksi protokol (`PROTO_AUTO` / `run_autodetect()`), pembacaan pack `1..4`, mekanisme hot-plug/hot-unplug, penskalaan dinamis (`compute_dynamic_caps()`), agregasi & gating safety (`aggregate_bank()`), audit EEPROM *read-only* per-pack (`run_shoto_param_audit()` 1 pack/siklus pada `params all`), serta pencatatan log periodik 5 detik (`[BAT ...]` & `[CELLS P# ...]`).
+* **Core 0 (`ha_mqtt_task`, stack `8192`, priority `1`, aktif bila `#define ENABLE_HA_MQTT 1`):**
+  * Tugas jaringan **non-blocking** terpisah untuk Wi-Fi (`WIFI_STA`, backoff `5s → 30s`), Eclipse Mosquitto MQTT (`PubSubClient`, buffer `1600 B`, LWT `online`/`offline` di `<MQTT_TOPIC_PREFIX>/status`, backoff `5s → 30s`), serta `ArduinoOTA` LAN-only.
+  * Hanya menyalin snapshot `g_bank`, `g_packs[]`, `g_pack_eeprom[]`, dan counter diagnostik dari `g_snap_mutex` secara singkat tanpa pernah menahan mutex saat I/O jaringan atau penulisan NVS (`Preferences`).
 * **Core 1 (`inv_bridge_task`, stack `6144`, priority `3`):**
   * Memantau `InvSerial` tiap 2 ms, menyaring frame Pylontech valid mulai dari `'~'` (`0x7E`) sampai `'\r'` (`0x0D`) sambil mengabaikan byte Modbus RTU campuran (`01 03 00 01 00 03 54 0B`), menyalin snapshot `g_bank` lewat `g_snap_mutex`, dan membalas lewat `handle_pylontech_request()`.
-* **`loop()` (Core 1):** Menjalankan `handle_serial_cli()` non-blocking pada USB Serial `115200 baud` dengan delay `20 ms`.
-* **Mutex & I/O Hygiene:** Seluruh salinan `g_packs[]`, `g_pack_online[]`, `g_pack_miss[]`, dan `g_bank` dilindungi `g_snap_mutex` (`SemaphoreHandle_t`), sementara `Serial.printf` dijalankan *di luar* mutex agar task inverter tidak pernah tertahan oleh serial monitor.
+* **`loop()` (Core 1):** Menjalankan `handle_serial_cli()` non-blocking pada USB Serial `115200 baud` dengan delay `25 ms`.
+* **Mutex & I/O Hygiene:** Seluruh salinan `g_packs[]`, `g_pack_online[]`, `g_pack_miss[]`, `g_pack_eeprom[]`, dan `g_bank` dilindungi `g_snap_mutex` (`SemaphoreHandle_t`), sementara `Serial.printf`, publish MQTT, dan akses NVS dijalankan *di luar* mutex agar task inverter tidak pernah tertahan oleh serial monitor maupun Wi-Fi/MQTT.
 * **Watchdog & Portabilitas Compiler:** Hardware Task WDT (`10 detik`, `trigger_panic = true`) mendukung **ESP-IDF 4 (`-std=gnu++11`)** dan **ESP-IDF 5 (`-std=gnu++17`)** via `#if ESP_IDF_VERSION`, disertai `#undef min` / `#undef max` untuk mencegah bentrokan makro Arduino, dan `static_assert` waktu kompilasi untuk konsistensi timing hot-unplug.
 
 ### 1.4 Prinsip *Fail-Closed Safety* (`safety_core.hpp` & `bridge_protocols.hpp`)
 Bank **wajib masuk kondisi aman (`INHIBIT`: `CCL = 0.0 A`, `DCL = 0.0 A`)** apabila salah satu kondisi berikut terjadi:
 1. **Boot / Belum Ada Telemetri Valid (`!has_telemetry`):** `handle_pylontech_request()` **diam (`return 0`)** agar inverter tidak menganggap BMS hadir sebelum data nyata terbaca.
-2. **Policy / Bridge Nonaktif:** `POLICY_USER_APPROVED == false` atau `BRIDGE_MODE == MODE_MONITOR_ONLY`.
+2. **Policy / Bridge Nonaktif:** `POLICY_USER_APPROVED == false` atau `BRIDGE_MODE == MODE_MONITOR_ONLY` (`!g_bridge_active`).
 3. **0 Pack Online:** `aggregate_bank(..., count=0, ...)` menghasilkan `valid = false`, `ccl = 0.0f`, `dcl = 0.0f`, `!has_telemetry`.
 4. **Data Kedaluwarsa (*Stale*):** Umur sampel salah satu pack aktif `> POLICY_FRESHNESS_MS` (`9000 ms`).
-5. **Selisih Tegangan Antar-Pack Terlalu Lebar:** `max_v - min_v > POLICY_MAX_DELTA_V` (`1.0 V`) saat 2–4 baterai online → `63H` mengirim `CCL = 0 A`, `DCL = 0 A`, status inhibit `0x00`, dan `62H` menaikkan bit System Fault (`p2 |= 1<<3`).
+5. **Selisih Tegangan Antar-Pack Terlalu Lebar:** `max_v - min_v > POLICY_MAX_DELTA_V` (`1.0 V` default; dapat di-clamp runtime `0.5–1.5 V`) saat 2–4 baterai online → `63H` mengirim `CCL = 0 A`, `DCL = 0 A`, status inhibit `0x00`, dan `62H` menaikkan bit System Fault (`p2 |= 1<<3`).
 6. **Proteksi Kritis / Integritas Frame Gagal:** Cell OV/UV, Pack OV/UV, OT/UT, jumlah tegangan sel berbeda `>= 3.0 V` terhadap tegangan pack (TLV Format B) atau `>= 5.0 V` (Format A), checksum salah, atau `CVL <= DVL`.
+
+### 1.5 Arsitektur Integrasi Home Assistant, Keamanan Aksi & Reverse Proxy (`ha_mqtt_codec.hpp` + `homeassistant/`)
+* **MQTT Auto-Discovery (`212` Entitas untuk `MAX_SUPPORTED_PACKS = 4`):**
+  * Menghasilkan `64` entitas global (bank telemetry, diagnosa inverter/ESP32, tombol/switch/select/number aksi) + `4 × 37 = 148` entitas per-pack (`17` status/sel min-max-dV/EEPROM valid + atribut/tombol audit + `5` suhu + `15` tegangan sel individual) dengan isolasi topik multi-site lewat `HA_DEVICE_ID` & `MQTT_TOPIC_PREFIX`.
+  * Seluruh payload JSON dibentuk lewat serializer statis `snprintf` (`ha_mqtt_codec.hpp`, batas `HA_MQTT_MAX_PAYLOAD = 1400 B`, tanpa alokasi heap `String`).
+* **Kontrol Aksi 2-Langkah (*Maintenance Unlock* `300 s`) & Persistensi NVS:**
+  * Aksi baca/diagnostik aman (`rescan`, `audit_eeprom`, `reset_diag`, `republish_discovery`, `cell_log`) dapat dijalankan kapan saja.
+  * Aksi kritikal (`restart`, `bridge_mode`, `dyn_discovery`, `policy_cvl`, `policy_dvl`, `policy_ccl`, `policy_dcl`, `policy_max_dv`, `policy_reset`) **wajib ditolak di ESP32 (`HA_ACT_DENIED_LOCKED`)** jika `Maintenance Unlock` tidak aktif; switch ini otomatis mengunci kembali setelah `HA_MAINT_UNLOCK_TIMEOUT_MS` (`300000 ms` / 5 menit).
+  * Perubahan kebijakan & mode disimpan persisten di NVS (`Preferences` namespace `"shoto_ha"`) dengan *hard clamp* 15S LFP (`CVL 51.0–54.4 V`, `DVL 44.0–48.0 V`, `CCL 10.0–90.0 A`, `DCL 10.0–120.0 A`, `MaxΔV 0.5–1.5 V`, sanitasi `NaN`/`Inf`).
+* **Strict Read-Only ke EEPROM Shoto:** Pembacaan parameter proteksi (`cmd 0x06..0x50`, `13` register) dan seluruh `43` tag alarm (`cmd 0x43`, `0x00..0x2A`) melalui Home Assistant tetap **100% read-only** tanpa perintah tulis EEPROM dan tanpa `16× 0xAA`.
+* **Keamanan Mini PC & Akses Jarak Jauh:**
+  * Di Mini PC, Mosquitto (`1883`, autentikasi wajib `allow_anonymous false`) dan Home Assistant (`8123`, default loopback `127.0.0.1` pada Docker Compose + `recorder` 30 hari & `commit_interval: 15`) hanya untuk LAN/internal.
+  * Akses internet/IP Publik hanya melalui **HTTPS Reverse Proxy port `443`** (Caddy / Nginx Proxy Manager) dengan WebSocket (`/api/websocket`), `use_x_forwarded_for: true`, `trusted_proxies`, `ip_ban_enabled: true` (`login_attempts_threshold: 5`), dan **2FA TOTP**; port `8123`, `1883`, `22`, dan OTA tidak pernah diekspos ke WAN.
 
 ---
 
@@ -161,28 +177,43 @@ Menurut **MOP Resmi Westindo (`reference/instalasi-baterai-lithium-shoto-sda10-4
 
 ---
 
-## 4. Apa yang Sudah Dibangun (Inventaris Codebase — Commit `94f4dbd` + Patch Opsi A `61H`)
+## 4. Apa yang Sudah Dibangun (Inventaris Codebase — `main` `c06ed15` + Branch `feat/home-assistant-integration` `v3.1.0`)
 
 ### 4.1 Peta File Repository
 | Path | Peran | Status |
 |---|---|---|
-| [`firmware/shoto_samoto_bridge/config.h`](firmware/shoto_samoto_bridge/config.h) | Konfigurasi board, protokol Shoto, parameter dynamic discovery & policy safety 24/7 | **Aktif & Updated (`94f4dbd`)** |
+| [`firmware/shoto_samoto_bridge/config.h`](firmware/shoto_samoto_bridge/config.h) | Konfigurasi board, protokol Shoto, dynamic discovery, policy safety 24/7, & `#define ENABLE_HA_MQTT` (default `0`) + topik/site HA | **Aktif & Updated (`v3.1.0`)** |
 | [`firmware/shoto_samoto_bridge/safety_core.hpp`](firmware/shoto_samoto_bridge/safety_core.hpp) | Struktur `Pack`, `Policy`, `Bank`, fungsi `usable()` & `aggregate()` 2-pack fail-closed | **Aktif (C++11/17 portable)** |
-| [`firmware/shoto_samoto_bridge/bridge_protocols.hpp`](firmware/shoto_samoto_bridge/bridge_protocols.hpp) | 4 codec Shoto + `DynamicLimits`/`compute_dynamic_caps` + `aggregate_bank` (0..4 pack) + tracking posisi sel Min/Max riil (`61H`) + Pylontech V3.5/V3.3 | **Aktif & Updated (Opsi A)** |
-| [`firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino`](firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino) | Sketch ESP32 FreeRTOS dual-core, runtime discovery, hot-plug/unplug, `static_assert`, Serial CLI | **Aktif & Updated (`94f4dbd`)** |
-| [`firmware/shoto_samoto_bridge/platformio.ini`](firmware/shoto_samoto_bridge/platformio.ini) | Build targets `diy_esp32_wroom32` dan `waveshare_esp32s3` (`-std=gnu++17 -Wall -Wextra`) | **Aktif** |
+| [`firmware/shoto_samoto_bridge/bridge_protocols.hpp`](firmware/shoto_samoto_bridge/bridge_protocols.hpp) | 4 codec Shoto + `DynamicLimits`/`compute_dynamic_caps` + `aggregate_bank` (0..4 pack) + posisi sel `61H` + Pylontech V3.5/V3.3 + `TbdProtParams` (`13` reg), `TbdAlarmParams` (`43` tag `0x00..0x2A`), `PackEepromSnapshot` | **Aktif & Updated (`v3.1.0`)** |
+| [`firmware/shoto_samoto_bridge/ha_mqtt_codec.hpp`](firmware/shoto_samoto_bridge/ha_mqtt_codec.hpp) | Codec C++17/11 portabel untuk Home Assistant: serializer JSON statis `snprintf` (`<= 1400 B`), generator `212` entitas MQTT Discovery (`MAX_PACKS=4`), clamp policy 15S LFP, & validator aksi `Maintenance Unlock` | **Host-Verified (`v3.1.0`)** |
+| [`firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino`](firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino) | Sketch ESP32 FreeRTOS dual-core (`v3.1.0`), runtime discovery, hot-plug/unplug, `params [1..4\|all]`, `ha_mqtt_task` Core 0 prio 1 non-blocking, persistensi NVS (`shoto_ha`), OTA LAN-only, & Serial CLI | **Aktif & 9 Stub Build Pass (`v3.1.0`)** |
+| [`firmware/shoto_samoto_bridge/platformio.ini`](firmware/shoto_samoto_bridge/platformio.ini) | Build targets `diy_esp32_wroom32` dan `waveshare_esp32s3` (`-std=gnu++17 -Wall -Wextra`, `lib_deps = knolleary/PubSubClient @ ^2.8`) | **Aktif & Updated (`v3.1.0`)** |
+| [`firmware/shoto_samoto_bridge/secrets.h.example`](firmware/shoto_samoto_bridge/secrets.h.example) | Template kredensial lokal Wi-Fi, Mosquitto MQTT, & `OTA_PASS` (disalin user menjadi `secrets.h` yang di-gitignore) | **Siap Provisioning User** |
 | [`firmware/*.yaml`](firmware/diy-reader-modbus-v12.yaml) | Template ESPHome opsional Home Assistant (`diy-*`, `waveshare-*`, `secrets.example.yaml`) | Opsional (Hanya read Shoto) |
-| [`tools/serial_lab.py`](tools/serial_lab.py) | CLI diagnosa PC (`probe`, `autodetect`, `capture`, `decode`, `esp-log --csv`) | **Aktif & Updated (`fcf803c`)** |
+| [`homeassistant/docker-compose.yml`](homeassistant/docker-compose.yml) | Stack Mini PC Docker Compose (`homeassistant`, `mosquitto` `:1883`, `caddy` `:443/:80`) dengan bind HA default loopback `127.0.0.1:8123` | **Host-Verified (Pending Live Mini PC)** |
+| [`homeassistant/configuration.yaml`](homeassistant/configuration.yaml) | Konfigurasi referensi HA (`http` `use_x_forwarded_for`, `trusted_proxies`, `ip_ban_enabled`, `recorder` 30d/`commit_interval: 15` SSD-safe, `!include`) | **Host-Verified (Pending Live Mini PC)** |
+| [`homeassistant/mosquitto/mosquitto.conf`](homeassistant/mosquitto/mosquitto.conf) | Konfigurasi broker Mosquitto LAN-only `:1883` (`allow_anonymous false`, `password_file`, UID/GID `1883:1883`) | **Host-Verified (Pending Live Mini PC)** |
+| [`homeassistant/Caddyfile.example`](homeassistant/Caddyfile.example) | Template reverse proxy TLS/HTTPS otomatis Let's Encrypt + WebSocket & security headers (disalin ke `Caddyfile`) | **Host-Verified (Pending Live Mini PC)** |
+| [`homeassistant/.env.example`](homeassistant/.env.example) | Template environment variables Mini PC (`TZ`, `HA_DOMAIN`, `ACME_EMAIL`, `MINI_PC_LAN_IP`, `HA_BIND_IP`) | **Host-Verified (Pending Live Mini PC)** |
+| [`homeassistant/dashboards/shoto_bms_dashboard.yaml`](homeassistant/dashboards/shoto_bms_dashboard.yaml) | Dashboard Lovelace 4-view (*Overview & Power Flow*, *Packs & 15-Cell Matrix*, *Shoto EEPROM Audit*, *Action Center & Diagnostics* dengan gate `Maintenance Unlock`) | **Host-Verified (Exact Entity Match)** |
+| [`homeassistant/automations_shoto_bms.yaml`](homeassistant/automations_shoto_bms.yaml) | Otomasi notifikasi keselamatan Shoto BMS berbahasa Indonesia (`INHIBIT`, `ΔV`, suhu, proteksi/fault, offline, auto-relock timer) | **Host-Verified (14 Artifact Tests)** |
+| [`homeassistant/scripts_shoto_bms.yaml`](homeassistant/scripts_shoto_bms.yaml) | Script utilitas HA (tes notifikasi bank & audit EEPROM *read-only* 1..4 pack dengan ringkasan notifikasi) | **Host-Verified (14 Artifact Tests)** |
+| [`GUIDE-HOME-ASSISTANT.md`](GUIDE-HOME-ASSISTANT.md) | Panduan step-by-step instalasi Mini PC (HAOS/Docker), Mosquitto, flash ESP32 HA, dashboard 4-view, & IP Publik HTTPS `:443` + 2FA | Dokumentasi Panduan |
+| [`docs/superpowers/plans/2026-11-25-home-assistant-integration.md`](docs/superpowers/plans/2026-11-25-home-assistant-integration.md) | Rencana implementasi & matriks verifikasi integrasi Home Assistant Task 1–7 | Dokumentasi Rencana |
+| [`tools/serial_lab.py`](tools/serial_lab.py) | CLI diagnosa PC (`probe`, `autodetect`, `capture`, `decode`, `esp-log --csv`, `esp-log --params`) | **Aktif & Updated (`fcf803c` + `--params`)** |
 | [`tests/safety_test.cpp`](tests/safety_test.cpp) | Host unit test 7 skenario inti `safety_core.hpp` | **Pass (C++11 & C++17)** |
-| [`tests/bridge_test.cpp`](tests/bridge_test.cpp) | Host unit test 8 suite (4 codec Shoto, V3.5/V3.3, live SD-BA430 140B, 3-pack IHF6200, dynamic 0..4 pack & posisi sel `61H`) | **Pass (C++11 & C++17)** |
-| [`tests/test_serial_lab.py`](tests/test_serial_lab.py) | 11 Python unit test golden `.exe`, PDF V1.2, DOC V2.8, capture live `ILS3600` & `esp-log` | **Pass (11/11 OK)** |
+| [`tests/bridge_test.cpp`](tests/bridge_test.cpp) | Host unit test 11 suite (4 codec Shoto, V3.5/V3.3, live SD-BA430 140B, 3-pack IHF6200, dynamic 0..4 pack, posisi sel `61H`, `TbdAlarmParams` 43-tag `cmd 0x43` & `PackEepromSnapshot`) | **Pass (11/11, C++11 & C++17)** |
+| [`tests/ha_mqtt_test.cpp`](tests/ha_mqtt_test.cpp) | Host unit test 4 suite codec HA MQTT (policy clamp + `NaN`, validator `Maintenance Unlock`, JSON `<= 1400 B`, keunikan & isolasi multi-site `212` entitas) | **Pass (4/4, C++11 & C++17)** |
+| [`tests/test_serial_lab.py`](tests/test_serial_lab.py) | 12 Python unit test golden `.exe`, PDF V1.2, DOC V2.8, capture live `ILS3600`, & `esp-log --params` | **Pass (12/12 OK)** |
+| [`tests/test_ha_artifacts.py`](tests/test_ha_artifacts.py) | 14 Python unit test hardening YAML/Docker/Mosquitto/Caddy, struktur dashboard 4-view, pencocokan persis entitas terhadap `ha_mqtt_codec.hpp`, & automations/scripts | **Pass (14/14 OK)** |
+| [`.gitignore`](.gitignore) | Mengabaikan file rahasia/lokal (`secrets.h`, `homeassistant/.env`, `homeassistant/Caddyfile`, `ha_config/`, `mosquitto/passwd`, `/tmp/`, `.pio/`) | **Aktif** |
 | [`data/samoto_pin12.log`](data/samoto_pin12.log) | Capture JSONL asli port BMS Samoto `ILS3600` (Pin 1/2 @ `9600 8N1`, 70 baris) | Bukti Lapangan |
 | [`data/esp32_debug.log`](data/esp32_debug.log) | Capture Serial Monitor ESP32 live handshake `ILS3600` `62H/63H/61H` (184 baris) | Bukti Lapangan |
 | [`data/ihf6200_raw.log`](data/ihf6200_raw.log) | Capture Serial Monitor ESP32 live `IHF6200` (`Menu 05 = PYL`, loop `63H/61H/62H`, 177 baris) | Bukti Lapangan |
 | [`data/shoto_params.log`](data/shoto_params.log) | Hasil audit *read-only* EEPROM parameter Shoto `TBD_BINARY` (`cmd 0x06..0x50` & `0x43`) | Bukti Lapangan |
 | [`ISSUE_REPORT_2026-11-24.md`](ISSUE_REPORT_2026-11-24.md) | Laporan lengkap diagnosa, perbaikan firmware, dan verifikasi live 3-pack issue `2026-11-24` | Dokumentasi Laporan |
 | [`GLOSSARY.md`](GLOSSARY.md) | Glosarium lengkap kode protokol (`60H..63H`, `42H..92H`, `TBD`), singkatan parameter BMS/inverter, & CLI | Dokumentasi Rujukan |
-| [`diagrams/*`](diagrams/shoto-cascade.svg) & [`GUIDE*.md`](GUIDE-A-DIY.md) | Panduan A/B, versi print `GUIDE-A-DIY-PRINT.pdf`, dan diagram wiring PNG/SVG | **Perlu Sinkronisasi (Lihat Bagian 5)** |
+| [`diagrams/*`](diagrams/shoto-cascade.svg) & [`GUIDE*.md`](GUIDE-A-DIY.md) | Panduan A/B, versi print `GUIDE-A-DIY-PRINT.pdf`, dan diagram wiring PNG/SVG | **Diagram Aktual; Teks `GUIDE*.md` Perlu Sinkronisasi** |
 | [`reference/`](reference/instalasi-baterai-lithium-shoto-sda10-48100_compress.pdf) | Binary RE `.exe`, PDF `Modbus V1.2`, DOC `V2.8`, log `*.xls`, MOP PDF Westindo `SDA10-48100` | Arsip Rujukan Resmi |
 
 ### 4.2 Parameter Aktif `config.h` & Tabel Skala Otomatis (`compute_dynamic_caps`)
@@ -213,7 +244,8 @@ Konfigurasi aktif di [`firmware/shoto_samoto_bridge/config.h`](firmware/shoto_sa
   * `celllog` — toggle log `[CELLS P# ...]` otomatis tiap 5 detik (default `ON`).
   * `raw` / `batraw` — toggle log hex mentah UART Inverter / UART Baterai RS485.
   * `scan` — memicu ulang auto-detect ke-4 protokol (`PROTO_AUTO`).
-  * `params` — audit parameter EEPROM read-only Shoto (`TBD cmd 0x06..0x50`, `cmd 0x43`, `Modbus V1.2`, `YD/T 1363 47H`) + ringkasan 7 parameter `[PARAM MAP ...]`.
+  * `params [1|2|3|4|all]` — audit parameter EEPROM read-only Shoto (`TBD cmd 0x06..0x50`, `cmd 0x43`, `Modbus V1.2`, `YD/T 1363 47H`) + ringkasan 7 parameter `[PARAM MAP ...]`; mode `all` mengaudit 1 pack per siklus Core 0 agar pack lain tetap `< 9000 ms`.
+* **Konfigurasi Integrasi HA ([`config.h`](firmware/shoto_samoto_bridge/config.h#L74-L97)):** `ENABLE_HA_MQTT` (default `0` offline, set `1` untuk HA), `HA_DEVICE_ID = "shoto_ils6300"`, `HA_SITE_NAME = "PLTS Samoto ILS6300"`, `MQTT_TOPIC_PREFIX = "shoto_bridge/ils6300"`, `HA_TELEMETRY_INTERVAL_MS = 3000UL`, `HA_CELLS_INTERVAL_MS = 5000UL`, `HA_MAINT_UNLOCK_TIMEOUT_MS = 300000UL`.
 * **CLI PC [`tools/serial_lab.py`](tools/serial_lab.py):** `autodetect`, `probe`, `capture`, `decode`, `esp-log --port <PORT> --seconds <S> --out data/esp32_debug.log --csv data/cells.csv` (tambahkan `--params` untuk capture audit `params` hingga `[PARAM DONE]`).
 
 ---
@@ -242,7 +274,10 @@ Dokumen panduan berikut dibuat sebelum uji fisik `SD-BA430` + `ILS3600` dan seba
 ### Prioritas 4 — Hardening Produksi 24/7 & Ekosistem
 * [ ] Upgrade modul RS485 dari `2× XY-K485` *non-isolated* ke **`2× Waveshare TTL TO RS485 (C)`** (terisolasi 2500 Vrms, pin GPIO tetap sama) atau migrasi ke **Opsi B** (`Waveshare ESP32-S3-RS485-CAN`) untuk ketahanan noise EMI jangka panjang terutama pada `IHF6200`.
 * [ ] Jalankan seluruh 15 skenario commissioning `T01–T15` + uji cabut-pasang (*hot-unplug / hot-plug*) baterai multi-pack pada kondisi beban aktif.
-* [ ] *(Opsional)* Tambahkan integrasi Home Assistant / telemetry logger Wi-Fi pada ESP32 terpisah (atau mode dual-task non-blocking bila dibutuhkan di masa depan).
+* [ ] **Live Deployment Home Assistant + Mini PC + IP Publik (Steps 2–4 [`2026-11-25-home-assistant-integration.md`](docs/superpowers/plans/2026-11-25-home-assistant-integration.md)):** Kode firmware, `212` entitas MQTT Discovery, stack Mini PC (`homeassistant/`), dashboard 4-view, & otomasi **sudah selesai dan HOST-VERIFIED**; tinggal eksekusi lapangan:
+  * Provisioning Mini PC (HAOS atau Docker Compose + Mosquitto `:1883` auth + Caddy/NPM HTTPS `:443` + 2FA TOTP).
+  * Buat `secrets.h` dari `secrets.h.example` dan flash ESP32 dengan `ENABLE_HA_MQTT 1` pada hardware live (`ILS6300`/`IHF6200` + Shoto).
+  * Verifikasi uji ketahanan putus Wi-Fi/MQTT 3 menit saat beban aktif (`inhibit=0`, `mtxMiss=0`, nol reboot WDT, auto-reconnect), gate `Maintenance Unlock` + NVS live, serta akses 4G/5G via HTTPS port `443` (port `8123`, `1883`, `22` tertutup dari WAN).
 
 ---
 
@@ -263,6 +298,7 @@ Dokumen panduan berikut dibuat sebelum uji fisik `SD-BA430` + `ILS3600` dan seba
 | **11. Audit Parameter Read-Only Shoto (`params` CLI & `esp-log --params`)** | `2026-11-23` | • Analisis REA (`inspect_managed_members` `Form1::baohucs` / `timer_readbhcs_Tick` / `gaojcs_read` pada `TianBangda V1.1.634-26.exe` + `data/tbdset.tbd` + `Modbus V1.2`) memetakan 7 parameter uji user antara EEPROM Shoto BMS vs parameter inverter Samoto vs bridge (`config.h`).<br>• Penambahan decoder `TbdAlarmParams`, `parse_tbd_param_u16()`, `parse_tbd_alarm_params_43()` ([`bridge_protocols.hpp`](firmware/shoto_samoto_bridge/bridge_protocols.hpp)), perintah CLI ESP32 **`params`** (`run_shoto_param_audit()` Core 0 *read-only* tanpa `0xAA` dengan `esp_task_wdt_reset()`, [`shoto_samoto_bridge.ino`](firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino)), mode capture **`--params`** pada [`tools/serial_lab.py`](tools/serial_lab.py), serta Suite 9 di [`tests/bridge_test.cpp`](tests/bridge_test.cpp) dan unit test `test_esp_log_params_mode_captures_and_stops_on_done` di [`tests/test_serial_lab.py`](tests/test_serial_lab.py). |
 | **12. Hardening 3-Pack `IHF6200` (`DCL Cap 120A`, Retry `delta_V`, & `diag` CLI)** | `2026-11-24` | • Capture live 22s pada 3 pack cascade (`V=49.81V, I=-7.35A, SOC=80.3%, ok=21 err=0, delta_V=0.06V`) memastikan sisi Shoto sehat.<br>• Penambahan plafon aman tingkat bank `POLICY_CCL_BANK_MAX_A = 90.0f` dan `POLICY_DCL_BANK_MAX_A = 120.0f` ([`config.h`](firmware/shoto_samoto_bridge/config.h), `DynamicLimits`/`compute_dynamic_caps` di [`bridge_protocols.hpp`](firmware/shoto_samoto_bridge/bridge_protocols.hpp)) agar `63H` pada 3–4 pack tidak mengirim `DCL=150A/200A` di atas batas `120 A` `IHF6200`.<br>• Penambahan `classify_bank_inhibit()` (`InhibitReason`) di [`bridge_protocols.hpp`](firmware/shoto_samoto_bridge/bridge_protocols.hpp), percepatan jeda antar-pack (`25 ms`), **1× konfirmasi re-poll langsung** saat `INHIBIT_DELTA_V` akibat skew polling multi-pack, counter `inhibit`/TX `60H..63H` + perintah CLI **`diag`** di [`shoto_samoto_bridge.ino`](firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino), serta **Suite 10** di [`tests/bridge_test.cpp`](tests/bridge_test.cpp).<br>• Verifikasi live pasca-upload dengan `Menu 05 = PYL` (`20:57`, `21:00`, `21:04`): terkunci penuh **`PYL_FULL`**, `inhibit=0`, `err=0`, bertahan di `Battery Mode` pada `49,78 V / 79,0% SOC` (`I=-8,18..-9,56 A`), disertai audit *read-only* `params` pada `addr=1`. Penyusunan laporan [`ISSUE_REPORT_2026-11-24.md`](ISSUE_REPORT_2026-11-24.md) dan glosarium [`GLOSSARY.md`](GLOSSARY.md). |
 | **13. Sinkronisasi Diagram Wiring Aktual (`SVG` + `PNG`)** | `2026-11-24` | • Pembaruan ke-4 diagram wiring + re-render PNG presisi: [`patchcord-xy-k485-samoto.*`](diagrams/patchcord-xy-k485-samoto.svg) (kini `Pin 2 Oranye = A+`, `Pin 1 Putih-Oranye = B−`, `Pin 3–8 NC`, menu `PYL` / `ILS`), [`patchcord-xy-k485-shoto.*`](diagrams/patchcord-xy-k485-shoto.svg) (`#1 RS485A`, `Pin 1=A+`, `Pin 2=B−`), [`shoto-cascade.*`](diagrams/shoto-cascade.svg) (arah MOP `#1 RS485B → #2 RS485A` + Endloop `120 Ω` di `RS485B` akhir + reboot `RESET`), dan [`diy-xy-k485.*`](diagrams/diy-xy-k485.svg) (keduanya aktual). |
+| **14. Integrasi Home Assistant, MQTT Discovery (`212` Entitas) & Hardening Mini PC (`e3912b4..4fae5e6`)** | `2026-11-25` | • **Implementasi (`v3.1.0`, strict read-only ke EEPROM Shoto):**<br>  – [`bridge_protocols.hpp`](firmware/shoto_samoto_bridge/bridge_protocols.hpp): `TbdProtParams` (`13` register `cmd 0x06..0x50`), `TbdAlarmParams` penuh (`43` tag `0x00..0x2A` termasuk suhu `-50 °C` & delay ms), `PackEepromSnapshot` + Suite 11 di [`tests/bridge_test.cpp`](tests/bridge_test.cpp).<br>  – [`ha_mqtt_codec.hpp`](firmware/shoto_samoto_bridge/ha_mqtt_codec.hpp) + [`tests/ha_mqtt_test.cpp`](tests/ha_mqtt_test.cpp): encoder JSON statis `snprintf` (`<= 1400 B`), `212` entitas MQTT Discovery (`MAX_PACKS=4`), clamp 15S LFP, dan validator aksi 2-langkah `Maintenance Unlock` (`300 s`).<br>  – [`shoto_samoto_bridge.ino`](firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino), [`config.h`](firmware/shoto_samoto_bridge/config.h), [`platformio.ini`](firmware/shoto_samoto_bridge/platformio.ini), [`secrets.h.example`](firmware/shoto_samoto_bridge/secrets.h.example), [`.gitignore`](.gitignore): `ha_mqtt_task` (Core `0`, prio `1`, stack `8192`, guarded `#define ENABLE_HA_MQTT 0`), backoff non-blocking, LWT, NVS (`Preferences` `"shoto_ha"`), OTA LAN-only, & CLI `params [1\|2\|3\|4\|all]`.<br>  – [`homeassistant/`](homeassistant/docker-compose.yml) + [`GUIDE-HOME-ASSISTANT.md`](GUIDE-HOME-ASSISTANT.md) + [`tests/test_ha_artifacts.py`](tests/test_ha_artifacts.py): Docker Compose (`homeassistant` + `mosquitto` LAN `:1883` + `caddy` HTTPS `:443`), `configuration.yaml` (`trusted_proxies`, `ip_ban_enabled`, `recorder` 30d), dashboard Lovelace 4-view, otomasi notifikasi & script audit EEPROM.<br>• **HOST-VERIFIED (`2026-11-25`):**<br>  – `python3 -m unittest discover -s tests -v`: **26/26 OK** (`14` `test_ha_artifacts.py` + `12` `test_serial_lab.py`).<br>  – `tests/safety_test.cpp`: **7/7 skenario PASS** (`-std=gnu++17` & `-std=gnu++11`, `-Wall -Wextra -Werror`).<br>  – `tests/bridge_test.cpp`: **11/11 suites PASS** (`-std=gnu++17` & `-std=gnu++11`, `-Wall -Wextra -Werror`).<br>  – `tests/ha_mqtt_test.cpp`: **4/4 suites PASS** (`-std=gnu++17` & `-std=gnu++11`, `-Wall -Wextra -Werror`).<br>  – **9/9 `.ino` stub builds** (`IDF4/IDF5 × Dynamic/Fixed × ENABLE_HA_MQTT=0/1` + `BOARD_WAVESHARE_S3`) lulus 0 warning (`-std=gnu++17 -Wall -Wextra -Werror`).<br>• **PENDING LIVE DEPLOYMENT (Steps 2–4 [`2026-11-25-home-assistant-integration.md`](docs/superpowers/plans/2026-11-25-home-assistant-integration.md) — belum dijalankan di hardware):**<br>  – Provisioning Mini PC (HAOS/Docker + Mosquitto + reverse proxy HTTPS `:443` + 2FA TOTP), pembuatan `secrets.h` & flash ESP32 `ENABLE_HA_MQTT 1`, uji putus Wi-Fi/MQTT saat beban aktif, uji `Maintenance Unlock`/NVS live, & verifikasi akses 4G/5G via IP Publik port `443`. |
 
 ---
 
@@ -270,21 +306,25 @@ Dokumen panduan berikut dibuat sebelum uji fisik `SD-BA430` + `ILS3600` dan seba
 
 ### 7.1 Suite Verifikasi Standar (Jalankan Setiap Setelah Mengubah Kode)
 ```bash
-# 1. Python Unit Tests (12 test termasuk live captures SD-BA430, ILS3600 & esp-log --params)
+# 1. Python Unit Tests (26 tests: 14 HA artifacts + 12 serial_lab/live captures/params)
 python3 -m unittest discover -s tests -v
 
-# 2. C++ Safety Core Tests (gnu++11 untuk IDF4 & gnu++17 untuk IDF5)
+# 2. C++ Safety Core Tests (7 skenario, gnu++11 untuk IDF4 & gnu++17 untuk IDF5)
 g++ -std=gnu++11 -Wall -Wextra -Werror -Ifirmware/shoto_samoto_bridge tests/safety_test.cpp -o /tmp/safety_11 && /tmp/safety_11
 g++ -std=gnu++17 -Wall -Wextra -Werror -Ifirmware/shoto_samoto_bridge tests/safety_test.cpp -o /tmp/safety_17 && /tmp/safety_17
 
-# 3. C++ Bridge Protocol & Dynamic Scaling Tests (10 suites)
+# 3. C++ Bridge Protocol, 43-Tag EEPROM & Dynamic Scaling Tests (11 suites)
 g++ -std=gnu++11 -Wall -Wextra -Werror -Ifirmware/shoto_samoto_bridge tests/bridge_test.cpp -o /tmp/bridge_11 && /tmp/bridge_11
 g++ -std=gnu++17 -Wall -Wextra -Werror -Ifirmware/shoto_samoto_bridge tests/bridge_test.cpp -o /tmp/bridge_17 && /tmp/bridge_17
 
-# 4. Pastikan bersih dari temporary binary (atau compile via Arduino IDE / pio run)
-rm -f /tmp/safety_11 /tmp/safety_17 /tmp/bridge_11 /tmp/bridge_17
+# 4. C++ HA MQTT Codec, 212-Entity Discovery & Action Validator Tests (4 suites)
+g++ -std=gnu++11 -Wall -Wextra -Werror -Ifirmware/shoto_samoto_bridge tests/ha_mqtt_test.cpp -o /tmp/ha_mqtt_11 && /tmp/ha_mqtt_11
+g++ -std=gnu++17 -Wall -Wextra -Werror -Ifirmware/shoto_samoto_bridge tests/ha_mqtt_test.cpp -o /tmp/ha_mqtt_17 && /tmp/ha_mqtt_17
+
+# 5. Pastikan bersih dari temporary binary (serta 9 stub build .ino IDF4/5 x Dyn/Fixed x HA=0/1 + Waveshare S3)
+rm -f /tmp/safety_11 /tmp/safety_17 /tmp/bridge_11 /tmp/bridge_17 /tmp/ha_mqtt_11 /tmp/ha_mqtt_17
 ```
-*(Terakhir diverifikasi penuh pada baseline commit `94f4dbd` dan diperluas pada patch Opsi A posisi sel `61H` untuk memvalidasi `min_cell_pack/idx`, `max_cell_pack/idx`, serta encoding desimal frame `61H` pada Suite 6 & Suite 7.)*
+*(Terakhir diverifikasi penuh di host pada branch `feat/home-assistant-integration` basis commit `4fae5e6`: 26 Python tests, seluruh unit test C++11/C++17, dan 9/9 stub build `.ino` dengan `-Wall -Wextra -Werror`.)*
 
 ### 7.2 *Hard Invariants* (Dilarang Dilanggar Saat Modifikasi Kode/Hardware)
 1. **Jangan kirim `16× 0xAA`** ketika protokol baterai sudah terkunci ke `PROTO_TBD_BINARY` atau bukan mode `PROTO_AUTO` (`SD-BA430` rusak responsnya jika diberi `0xAA`).
