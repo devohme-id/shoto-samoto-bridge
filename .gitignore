@@ -1,6 +1,11 @@
 firmware/shoto_samoto_bridge/secrets.h
 homeassistant/.env
+homeassistant/Caddyfile
+homeassistant/ha_config/
+homeassistant/caddy/
 homeassistant/mosquitto/passwd
+homeassistant/mosquitto/data/
+homeassistant/mosquitto/log/
 /tmp/
 .superpowers/
 .pio/

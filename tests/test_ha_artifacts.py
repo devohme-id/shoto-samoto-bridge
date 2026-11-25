@@ -1,5 +1,6 @@
 import json
 import re
+import shutil
 import subprocess
 import unittest
 from pathlib import Path
@@ -31,13 +32,18 @@ def load_yaml_file(path: Path) -> dict:
             )
         data = _pyyaml.load(text, Loader=_HALoader)
     else:
+        ruby_bin = shutil.which("ruby")
+        if ruby_bin is None:
+            raise RuntimeError(
+                "YAML parser unavailable: install Python 'pyyaml' or ensure 'ruby' is on PATH."
+            )
         ruby_script = (
             "require 'yaml'; require 'json'; "
             "data = YAML.load(ARGF.read); "
             "puts JSON.generate(data)"
         )
         proc = subprocess.run(
-            ["ruby", "-e", ruby_script, str(path)],
+            [ruby_bin, "-e", ruby_script, str(path)],
             capture_output=True,
             text=True,
             check=False,

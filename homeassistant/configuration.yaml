@@ -3,7 +3,14 @@
 # =============================================================================
 # Untuk pengguna HAOS (Opsi A): gabungkan blok `http:` dan `recorder:` di bawah
 # ke file `/config/configuration.yaml` melalui add-on File Editor / Studio Code.
-# Untuk pengguna Docker Compose (Opsi B): salin ke `./ha_config/configuration.yaml`.
+# Untuk pengguna Docker Compose (Opsi B): jalankan dari folder `homeassistant/`:
+#   mkdir -p ha_config && cp configuration.yaml ha_config/configuration.yaml
+#   printf '[]\n' > ha_config/automations.yaml
+#   printf '{}\n' > ha_config/scripts.yaml
+#   printf '[]\n' > ha_config/scenes.yaml
+# (atau jalankan `docker compose up -d homeassistant` sekali terlebih dahulu
+# sebelum menimpa `ha_config/configuration.yaml` agar file `!include` sudah dibuat,
+# jika tidak HA akan masuk Safe Mode karena file include belum ada).
 
 default_config:
 

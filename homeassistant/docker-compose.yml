@@ -1,11 +1,18 @@
 # =============================================================================
 # Docker Compose Mini PC — Home Assistant + Mosquitto (LAN) + Caddy (HTTPS)
 # =============================================================================
-# Langkah pakai (Opsi B di Ubuntu/Debian Server):
-#   1. Salin `.env.example` menjadi `.env` dan isi domain + timezone Anda.
-#   2. Salin `Caddyfile.example` menjadi `Caddyfile`.
-#   3. Buat file user MQTT `mosquitto/passwd` (lihat petunjuk di `mosquitto/mosquitto.conf`).
-#   4. Jalankan: `docker compose up -d`
+# Langkah pakai (Opsi B di Ubuntu/Debian Server, jalankan dari folder `homeassistant/`):
+#   1. cd homeassistant
+#   2. Salin `.env.example` menjadi `.env` dan isi domain + timezone Anda.
+#   3. Salin `Caddyfile.example` menjadi `Caddyfile`.
+#   4. Siapkan `ha_config/` agar `!include` tidak menyebabkan HA masuk Safe Mode:
+#        mkdir -p ha_config && cp configuration.yaml ha_config/configuration.yaml
+#        printf '[]\n' > ha_config/automations.yaml
+#        printf '{}\n' > ha_config/scripts.yaml
+#        printf '[]\n' > ha_config/scenes.yaml
+#      (atau jalankan `docker compose up -d homeassistant` sekali sebelum menimpa `ha_config/configuration.yaml`).
+#   5. Buat file user MQTT `mosquitto/passwd` dengan UID 1883 (lihat `mosquitto/mosquitto.conf`).
+#   6. Jalankan: `docker compose up -d`
 
 services:
   homeassistant:
