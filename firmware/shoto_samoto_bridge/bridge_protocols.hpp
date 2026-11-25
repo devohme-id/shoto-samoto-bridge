@@ -565,22 +565,83 @@ inline bool parse_tbd_binary_resp(
 
 // -------------------- 2b. TianBangda Read-Only Parameter Decoders (EXE RE) --------------------
 
+struct TbdProtParams {
+    bool valid = false;
+    uint32_t audited_ms = 0;
+    uint16_t cell_ov_prot_mv = 0;
+    uint16_t cell_ov_rec_mv = 0;
+    uint16_t cell_uv_prot_mv = 0;
+    uint16_t cell_uv_rec_mv = 0;
+    uint16_t pack_ov_prot_cv = 0;
+    uint16_t pack_ov_rec_cv = 0;
+    uint16_t pack_uv_prot_cv = 0;
+    uint16_t pack_uv_rec_cv = 0;
+    uint16_t const_chg_cv = 0;
+    uint16_t const_chg_ci = 0;
+    uint16_t cell_sleep_mv = 0;
+    uint16_t uv_off_interval = 0;
+    uint16_t sleep_time_min = 0;
+};
+
 struct TbdAlarmParams {
     bool valid = false;
     uint8_t tag_count = 0;
     uint16_t cell_ov_alarm_mv = 0;
+    uint16_t cell_ov_delay_ms = 0;
     uint16_t cell_ov_alarm_rec_mv = 0;
     uint16_t cell_uv_alarm_mv = 0;
+    uint16_t cell_uv_delay_ms = 0;
     uint16_t cell_uv_alarm_rec_mv = 0;
     uint16_t pack_ov_alarm_cv = 0;
+    uint16_t pack_ov_delay_ms = 0;
     uint16_t pack_ov_alarm_rec_cv = 0;
     uint16_t pack_uv_alarm_cv = 0;
+    uint16_t pack_uv_delay_ms = 0;
     uint16_t pack_uv_alarm_rec_cv = 0;
+    uint16_t chg_oc_ca = 0;
+    uint16_t chg_oc_delay_ms = 0;
+    uint16_t chg_oc_rec_ca = 0;
+    uint16_t dsg_oc_ca = 0;
+    uint16_t dsg_oc_delay_ms = 0;
+    uint16_t dsg_oc_rec_ca = 0;
+    int16_t chg_ot_c = 0;
+    uint16_t chg_ot_delay_ms = 0;
+    int16_t chg_ot_rec_c = 0;
+    int16_t chg_ut_c = 0;
+    uint16_t chg_ut_delay_ms = 0;
+    int16_t chg_ut_rec_c = 0;
+    int16_t dsg_ot_c = 0;
+    uint16_t dsg_ot_delay_ms = 0;
+    int16_t dsg_ot_rec_c = 0;
+    int16_t dsg_ut_c = 0;
+    uint16_t dsg_ut_delay_ms = 0;
+    int16_t dsg_ut_rec_c = 0;
+    int16_t mos_ot_c = 0;
+    uint16_t mos_ot_delay_ms = 0;
+    int16_t mos_ot_rec_c = 0;
     uint16_t low_soc_alarm_pct = 0;
     uint16_t low_soc_alarm_rec_pct = 0;
     uint16_t cell_diff_alarm_mv = 0;
     uint16_t cell_diff_alarm_rec_mv = 0;
+    int16_t env_ot_c = 0;
+    uint16_t env_ot_delay_ms = 0;
+    int16_t env_ot_rec_c = 0;
+    int16_t env_ut_c = 0;
+    uint16_t env_ut_delay_ms = 0;
+    int16_t env_ut_rec_c = 0;
 };
+
+struct PackEepromSnapshot {
+    uint8_t addr = 0;
+    bool valid = false;
+    uint32_t audited_ms = 0;
+    TbdProtParams prot;
+    TbdAlarmParams alarm;
+};
+
+inline int16_t decode_tbd_temp_c(uint16_t v) {
+    return static_cast<int16_t>(static_cast<int16_t>(v) - 50);
+}
 
 // Verified from TianBangda V1.1.634-26.exe Form1::baohucs: payload uint16 value at rx[6..7] (or rx[4..5] if plen==2).
 inline bool parse_tbd_param_u16(
@@ -629,17 +690,48 @@ inline bool parse_tbd_alarm_params_43(
             out.tag_count++;
             switch (tag) {
                 case 0x00: out.cell_ov_alarm_mv = v; break;
+                case 0x01: out.cell_ov_delay_ms = v; break;
                 case 0x02: out.cell_ov_alarm_rec_mv = v; break;
                 case 0x03: out.cell_uv_alarm_mv = v; break;
+                case 0x04: out.cell_uv_delay_ms = v; break;
                 case 0x05: out.cell_uv_alarm_rec_mv = v; break;
                 case 0x06: out.pack_ov_alarm_cv = v; break;
+                case 0x07: out.pack_ov_delay_ms = v; break;
                 case 0x08: out.pack_ov_alarm_rec_cv = v; break;
                 case 0x09: out.pack_uv_alarm_cv = v; break;
+                case 0x0A: out.pack_uv_delay_ms = v; break;
                 case 0x0B: out.pack_uv_alarm_rec_cv = v; break;
+                case 0x0C: out.chg_oc_ca = v; break;
+                case 0x0D: out.chg_oc_delay_ms = v; break;
+                case 0x0E: out.chg_oc_rec_ca = v; break;
+                case 0x0F: out.dsg_oc_ca = v; break;
+                case 0x10: out.dsg_oc_delay_ms = v; break;
+                case 0x11: out.dsg_oc_rec_ca = v; break;
+                case 0x12: out.chg_ot_c = decode_tbd_temp_c(v); break;
+                case 0x13: out.chg_ot_delay_ms = v; break;
+                case 0x14: out.chg_ot_rec_c = decode_tbd_temp_c(v); break;
+                case 0x15: out.chg_ut_c = decode_tbd_temp_c(v); break;
+                case 0x16: out.chg_ut_delay_ms = v; break;
+                case 0x17: out.chg_ut_rec_c = decode_tbd_temp_c(v); break;
+                case 0x18: out.dsg_ot_c = decode_tbd_temp_c(v); break;
+                case 0x19: out.dsg_ot_delay_ms = v; break;
+                case 0x1A: out.dsg_ot_rec_c = decode_tbd_temp_c(v); break;
+                case 0x1B: out.dsg_ut_c = decode_tbd_temp_c(v); break;
+                case 0x1C: out.dsg_ut_delay_ms = v; break;
+                case 0x1D: out.dsg_ut_rec_c = decode_tbd_temp_c(v); break;
+                case 0x1E: out.mos_ot_c = decode_tbd_temp_c(v); break;
+                case 0x1F: out.mos_ot_delay_ms = v; break;
+                case 0x20: out.mos_ot_rec_c = decode_tbd_temp_c(v); break;
                 case 0x21: out.low_soc_alarm_pct = v; break;
                 case 0x22: out.low_soc_alarm_rec_pct = v; break;
                 case 0x23: out.cell_diff_alarm_mv = v; break;
                 case 0x24: out.cell_diff_alarm_rec_mv = v; break;
+                case 0x25: out.env_ot_c = decode_tbd_temp_c(v); break;
+                case 0x26: out.env_ot_delay_ms = v; break;
+                case 0x27: out.env_ot_rec_c = decode_tbd_temp_c(v); break;
+                case 0x28: out.env_ut_c = decode_tbd_temp_c(v); break;
+                case 0x29: out.env_ut_delay_ms = v; break;
+                case 0x2A: out.env_ut_rec_c = decode_tbd_temp_c(v); break;
                 default: break;
             }
         }

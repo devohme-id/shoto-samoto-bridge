@@ -803,6 +803,66 @@ int main() {
         assert(std::strcmp(inhibit_reason_name(INHIBIT_DELTA_V), "DELTA_V") == 0);
     }
 
-    std::cout << "ALL 10 C++17 bridge protocol & safety suites PASS\n";
+    // 11) Full 43-tag cmd 0x43 EEPROM decoder & TbdProtParams + PackEepromSnapshot
+    {
+        static const uint8_t rx43_live[178] = {
+            0x7E,0x01,0x43,0xAC,0x00,0x02,0x0E,0x74,0x01,0x02,0x0B,0xB8,0x02,0x02,0x0E,0x42,
+            0x03,0x02,0x09,0xC4,0x04,0x02,0x0B,0xB8,0x05,0x02,0x0C,0x80,0x06,0x02,0x15,0x18,
+            0x07,0x02,0x0B,0xB8,0x08,0x02,0x14,0x82,0x09,0x02,0x10,0x68,0x0A,0x02,0x0B,0xB8,
+            0x0B,0x02,0x12,0xC0,0x0C,0x02,0x29,0x04,0x0D,0x02,0x0B,0xB8,0x0E,0x02,0x27,0x10,
+            0x0F,0x02,0x29,0x04,0x10,0x02,0x0B,0xB8,0x11,0x02,0x27,0x10,0x12,0x02,0x00,0x6E,
+            0x13,0x02,0x0B,0xB8,0x14,0x02,0x00,0x69,0x15,0x02,0x00,0x2D,0x16,0x02,0x0B,0xB8,
+            0x17,0x02,0x00,0x2F,0x18,0x02,0x00,0x87,0x19,0x02,0x0B,0xB8,0x1A,0x02,0x00,0x82,
+            0x1B,0x02,0x00,0x1E,0x1C,0x02,0x0B,0xB8,0x1D,0x02,0x00,0x23,0x1E,0x02,0x00,0xA0,
+            0x1F,0x02,0x0B,0xB8,0x20,0x02,0x00,0x96,0x21,0x02,0x00,0x14,0x22,0x02,0x00,0x19,
+            0x23,0x02,0x03,0xE8,0x24,0x02,0x01,0xF4,0x25,0x02,0x00,0x73,0x26,0x02,0x0B,0xB8,
+            0x27,0x02,0x00,0x6E,0x28,0x02,0x00,0x1E,0x29,0x02,0x0B,0xB8,0x2A,0x02,0x00,0x20,
+            0x66,0x0D
+        };
+        TbdAlarmParams ap{};
+        assert(parse_tbd_alarm_params_43(rx43_live, sizeof(rx43_live), 1, ap));
+        assert(ap.valid && ap.tag_count == 43);
+        assert(ap.cell_ov_alarm_mv == 3700 && ap.cell_ov_delay_ms == 3000 && ap.cell_ov_alarm_rec_mv == 3650);
+        assert(ap.cell_uv_alarm_mv == 2500 && ap.cell_uv_delay_ms == 3000 && ap.cell_uv_alarm_rec_mv == 3200);
+        assert(ap.pack_ov_alarm_cv == 5400 && ap.pack_ov_delay_ms == 3000 && ap.pack_ov_alarm_rec_cv == 5250);
+        assert(ap.pack_uv_alarm_cv == 4200 && ap.pack_uv_delay_ms == 3000 && ap.pack_uv_alarm_rec_cv == 4800);
+        assert(ap.chg_oc_ca == 10500 && ap.chg_oc_delay_ms == 3000 && ap.chg_oc_rec_ca == 10000);
+        assert(ap.dsg_oc_ca == 10500 && ap.dsg_oc_delay_ms == 3000 && ap.dsg_oc_rec_ca == 10000);
+        assert(ap.chg_ot_c == 60 && ap.chg_ot_delay_ms == 3000 && ap.chg_ot_rec_c == 55);
+        assert(ap.chg_ut_c == -5 && ap.chg_ut_delay_ms == 3000 && ap.chg_ut_rec_c == -3);
+        assert(ap.dsg_ot_c == 85 && ap.dsg_ot_delay_ms == 3000 && ap.dsg_ot_rec_c == 80);
+        assert(ap.dsg_ut_c == -20 && ap.dsg_ut_delay_ms == 3000 && ap.dsg_ut_rec_c == -15);
+        assert(ap.mos_ot_c == 110 && ap.mos_ot_delay_ms == 3000 && ap.mos_ot_rec_c == 100);
+        assert(ap.low_soc_alarm_pct == 20 && ap.low_soc_alarm_rec_pct == 25);
+        assert(ap.cell_diff_alarm_mv == 1000 && ap.cell_diff_alarm_rec_mv == 500);
+        assert(ap.env_ot_c == 65 && ap.env_ot_delay_ms == 3000 && ap.env_ot_rec_c == 60);
+        assert(ap.env_ut_c == -20 && ap.env_ut_delay_ms == 3000 && ap.env_ut_rec_c == -18);
+
+        PackEepromSnapshot snap{};
+        assert(!snap.valid && snap.addr == 0 && snap.audited_ms == 0);
+        assert(!snap.prot.valid && snap.prot.audited_ms == 0 && snap.prot.cell_ov_prot_mv == 0);
+        snap.addr = 1;
+        snap.alarm = ap;
+        snap.prot.cell_ov_prot_mv = 3750;
+        snap.prot.cell_ov_rec_mv = 3600;
+        snap.prot.cell_uv_prot_mv = 2400;
+        snap.prot.cell_uv_rec_mv = 3100;
+        snap.prot.pack_ov_prot_cv = 5500;
+        snap.prot.pack_ov_rec_cv = 5300;
+        snap.prot.pack_uv_prot_cv = 4000;
+        snap.prot.pack_uv_rec_cv = 4600;
+        snap.prot.const_chg_cv = 5200;
+        snap.prot.const_chg_ci = 1000;
+        snap.prot.cell_sleep_mv = 3150;
+        snap.prot.uv_off_interval = 30;
+        snap.prot.sleep_time_min = 60;
+        snap.prot.valid = true;
+        snap.prot.audited_ms = 1234;
+        snap.audited_ms = 1234;
+        snap.valid = snap.prot.valid && snap.alarm.valid;
+        assert(snap.valid && snap.prot.const_chg_cv == 5200 && snap.prot.sleep_time_min == 60);
+    }
+
+    std::cout << "ALL 11 C++17 bridge protocol & safety suites PASS\n";
     return 0;
 }
