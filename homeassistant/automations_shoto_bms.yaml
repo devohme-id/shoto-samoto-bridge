@@ -88,24 +88,25 @@
           dV={{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }}mV.
 
 - id: shoto_bms_low_soc_warning
-  alias: "Shoto BMS: Peringatan SOC Rendah (< 25%)"
+  alias: "Shoto BMS: Peringatan SOC Rendah (<= 25%)"
   description: >-
-    Peringatan dini saat SOC bank baterai PLTS Samoto ILS6300 turun di bawah
-    25% selama minimal 1 menit.
+    Peringatan dini saat SOC bank baterai PLTS Samoto ILS6300 turun hingga
+    <= 25% selama minimal 1 menit.
   mode: single
   trigger:
-    - platform: numeric_state
-      entity_id: sensor.shoto_ils6300_bank_soc
-      below: 25
+    - platform: template
+      value_template: >-
+        {{ is_number(states('sensor.shoto_ils6300_bank_soc'))
+           and (states('sensor.shoto_ils6300_bank_soc') | float(100)) <= 25 }}
       for: "00:01:00"
   action:
     - service: persistent_notification.create
       data:
         notification_id: shoto_bms_low_soc_warning
-        title: "[PERINGATAN] PLTS Samoto ILS6300 - SOC Baterai Rendah (< 25%)"
+        title: "[PERINGATAN] PLTS Samoto ILS6300 - SOC Baterai Rendah (<= 25%)"
         message: >-
           Site: PLTS Samoto ILS6300.
-          SOC bank baterai turun ke {{ states('sensor.shoto_ils6300_bank_soc') }} % (< 25%).
+          SOC bank baterai mencapai {{ states('sensor.shoto_ils6300_bank_soc') }} % (<= 25%).
           Tegangan Bank: {{ states('sensor.shoto_ils6300_bank_voltage') }} V |
           Delta V: {{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }} mV |
           Pack Online: {{ states('sensor.shoto_ils6300_bank_pack_count') }} / 4 |
@@ -113,7 +114,7 @@
     - service: notify.notify
       continue_on_error: true
       data:
-        title: "[PERINGATAN] PLTS Samoto ILS6300 - SOC < 25%"
+        title: "[PERINGATAN] PLTS Samoto ILS6300 - SOC <= 25%"
         message: >-
           PLTS Samoto ILS6300 SOC rendah: {{ states('sensor.shoto_ils6300_bank_soc') }}%
           (V={{ states('sensor.shoto_ils6300_bank_voltage') }}V,
@@ -121,24 +122,25 @@
           Siapkan pengisian atau kurangi beban.
 
 - id: shoto_bms_low_soc_critical
-  alias: "Shoto BMS: Peringatan KRITIS SOC Sangat Rendah (< 20%)"
+  alias: "Shoto BMS: Peringatan KRITIS SOC Sangat Rendah (<= 20%)"
   description: >-
     Peringatan prioritas tinggi saat SOC bank baterai PLTS Samoto ILS6300
-    turun di bawah 20% selama minimal 30 detik.
+    turun hingga <= 20% selama minimal 30 detik.
   mode: single
   trigger:
-    - platform: numeric_state
-      entity_id: sensor.shoto_ils6300_bank_soc
-      below: 20
+    - platform: template
+      value_template: >-
+        {{ is_number(states('sensor.shoto_ils6300_bank_soc'))
+           and (states('sensor.shoto_ils6300_bank_soc') | float(100)) <= 20 }}
       for: "00:00:30"
   action:
     - service: persistent_notification.create
       data:
         notification_id: shoto_bms_low_soc_critical
-        title: "[KRITIS] PLTS Samoto ILS6300 - SOC Baterai Kritis (< 20%)"
+        title: "[KRITIS] PLTS Samoto ILS6300 - SOC Baterai Kritis (<= 20%)"
         message: >-
           Site: PLTS Samoto ILS6300.
-          PERINGATAN KRITIS: SOC bank baterai tinggal {{ states('sensor.shoto_ils6300_bank_soc') }} % (< 20%)!
+          PERINGATAN KRITIS: SOC bank baterai tinggal {{ states('sensor.shoto_ils6300_bank_soc') }} % (<= 20%)!
           Tegangan Bank: {{ states('sensor.shoto_ils6300_bank_voltage') }} V |
           Delta V: {{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }} mV |
           Pack Online: {{ states('sensor.shoto_ils6300_bank_pack_count') }} / 4 |
@@ -147,7 +149,7 @@
     - service: notify.notify
       continue_on_error: true
       data:
-        title: "[KRITIS] PLTS Samoto ILS6300 - SOC < 20%!"
+        title: "[KRITIS] PLTS Samoto ILS6300 - SOC <= 20%!"
         message: >-
           KRITIS PLTS Samoto ILS6300: SOC={{ states('sensor.shoto_ils6300_bank_soc') }}%!
           V={{ states('sensor.shoto_ils6300_bank_voltage') }}V,
@@ -160,15 +162,16 @@
           channel: alarm_stream
 
 - id: shoto_bms_cell_imbalance_alert
-  alias: "Shoto BMS: Peringatan Ketidakseimbangan Sel (Delta V > 80 mV)"
+  alias: "Shoto BMS: Peringatan Ketidakseimbangan Sel (Delta V >= 80 mV)"
   description: >-
     Kirim notifikasi jika selisih tegangan sel tertinggi dan terendah bank
-    melebihi 80 mV selama minimal 1 menit.
+    mencapai >= 80 mV selama minimal 1 menit.
   mode: single
   trigger:
-    - platform: numeric_state
-      entity_id: sensor.shoto_ils6300_bank_cell_dv_mv
-      above: 80
+    - platform: template
+      value_template: >-
+        {{ is_number(states('sensor.shoto_ils6300_bank_cell_dv_mv'))
+           and (states('sensor.shoto_ils6300_bank_cell_dv_mv') | int(0)) >= 80 }}
       for: "00:01:00"
   action:
     - service: persistent_notification.create
@@ -177,7 +180,7 @@
         title: "[PERINGATAN] PLTS Samoto ILS6300 - Ketidakseimbangan Sel Tinggi"
         message: >-
           Site: PLTS Samoto ILS6300.
-          Delta V sel bank mencapai {{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }} mV (> 80 mV).
+          Delta V sel bank mencapai {{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }} mV (>= 80 mV).
           Sel Min/Max: {{ states('sensor.shoto_ils6300_bank_cell_min_mv') }} /
           {{ states('sensor.shoto_ils6300_bank_cell_max_mv') }} mV |
           SOC: {{ states('sensor.shoto_ils6300_bank_soc') }} % |
@@ -185,31 +188,32 @@
     - service: notify.notify
       continue_on_error: true
       data:
-        title: "[PERINGATAN] PLTS Samoto ILS6300 - Delta V > 80 mV"
+        title: "[PERINGATAN] PLTS Samoto ILS6300 - Delta V >= 80 mV"
         message: >-
           PLTS Samoto ILS6300 Delta V={{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }}mV
           ({{ states('sensor.shoto_ils6300_bank_cell_min_mv') }}-{{ states('sensor.shoto_ils6300_bank_cell_max_mv') }}mV),
           SOC={{ states('sensor.shoto_ils6300_bank_soc') }}%.
 
 - id: shoto_bms_high_temp_alert
-  alias: "Shoto BMS: Peringatan Suhu Baterai Tinggi (> 48 C)"
+  alias: "Shoto BMS: Peringatan Suhu Baterai Tinggi (>= 48 C)"
   description: >-
-    Kirim notifikasi jika suhu maksimum sel/BMS pada bank baterai melebihi
-    48 C selama minimal 1 menit.
+    Kirim notifikasi jika suhu maksimum sel/BMS pada bank baterai mencapai
+    >= 48 C selama minimal 1 menit.
   mode: single
   trigger:
-    - platform: numeric_state
-      entity_id: sensor.shoto_ils6300_bank_temp_max
-      above: 48
+    - platform: template
+      value_template: >-
+        {{ is_number(states('sensor.shoto_ils6300_bank_temp_max'))
+           and (states('sensor.shoto_ils6300_bank_temp_max') | float(0)) >= 48 }}
       for: "00:01:00"
   action:
     - service: persistent_notification.create
       data:
         notification_id: shoto_bms_high_temp_alert
-        title: "[BAHAYA] PLTS Samoto ILS6300 - Suhu Baterai Tinggi (> 48 C)"
+        title: "[BAHAYA] PLTS Samoto ILS6300 - Suhu Baterai Tinggi (>= 48 C)"
         message: >-
           Site: PLTS Samoto ILS6300.
-          Suhu maksimum bank mencapai {{ states('sensor.shoto_ils6300_bank_temp_max') }} C (> 48 C),
+          Suhu maksimum bank mencapai {{ states('sensor.shoto_ils6300_bank_temp_max') }} C (>= 48 C),
           suhu minimum {{ states('sensor.shoto_ils6300_bank_temp_min') }} C.
           SOC: {{ states('sensor.shoto_ils6300_bank_soc') }} % |
           Delta V: {{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }} mV |
@@ -218,7 +222,7 @@
     - service: notify.notify
       continue_on_error: true
       data:
-        title: "[BAHAYA] PLTS Samoto ILS6300 - Suhu > 48 C"
+        title: "[BAHAYA] PLTS Samoto ILS6300 - Suhu >= 48 C"
         message: >-
           PLTS Samoto ILS6300 suhu maks={{ states('sensor.shoto_ils6300_bank_temp_max') }}C!
           SOC={{ states('sensor.shoto_ils6300_bank_soc') }}%,

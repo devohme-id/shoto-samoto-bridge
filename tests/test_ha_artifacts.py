@@ -634,37 +634,43 @@ class TestShotoAutomationsAndScripts(unittest.TestCase):
         self.assertEqual(pack_off_triggers[0].get("to"), "off")
         self.assertEqual(parse_ha_duration_s(pack_off_triggers[0].get("for")), 30)
 
-        # 3 & 4. Low SOC warning (<25) & critical (<20)
+        # 3 & 4. Low SOC warning (<= 25%) & critical (<= 20%) via exact template triggers
         soc_warn_tr = by_id["shoto_bms_low_soc_warning"].get(
             "trigger", by_id["shoto_bms_low_soc_warning"].get("triggers")
         )
-        self.assertEqual(soc_warn_tr[0].get("platform", soc_warn_tr[0].get("trigger")), "numeric_state")
-        self.assertEqual(soc_warn_tr[0].get("entity_id"), "sensor.shoto_ils6300_bank_soc")
-        self.assertEqual(soc_warn_tr[0].get("below"), 25)
+        self.assertEqual(soc_warn_tr[0].get("platform", soc_warn_tr[0].get("trigger")), "template")
+        soc_warn_tpl = soc_warn_tr[0].get("value_template", "")
+        self.assertIn("is_number(states('sensor.shoto_ils6300_bank_soc'))", soc_warn_tpl)
+        self.assertIn("<= 25", soc_warn_tpl)
         self.assertEqual(parse_ha_duration_s(soc_warn_tr[0].get("for")), 60)
 
         soc_crit_tr = by_id["shoto_bms_low_soc_critical"].get(
             "trigger", by_id["shoto_bms_low_soc_critical"].get("triggers")
         )
-        self.assertEqual(soc_crit_tr[0].get("platform", soc_crit_tr[0].get("trigger")), "numeric_state")
-        self.assertEqual(soc_crit_tr[0].get("entity_id"), "sensor.shoto_ils6300_bank_soc")
-        self.assertEqual(soc_crit_tr[0].get("below"), 20)
+        self.assertEqual(soc_crit_tr[0].get("platform", soc_crit_tr[0].get("trigger")), "template")
+        soc_crit_tpl = soc_crit_tr[0].get("value_template", "")
+        self.assertIn("is_number(states('sensor.shoto_ils6300_bank_soc'))", soc_crit_tpl)
+        self.assertIn("<= 20", soc_crit_tpl)
         self.assertEqual(parse_ha_duration_s(soc_crit_tr[0].get("for")), 30)
 
-        # 5. Cell imbalance alert (>80 mV)
+        # 5. Cell imbalance alert (>= 80 mV) via exact template trigger
         dv_tr = by_id["shoto_bms_cell_imbalance_alert"].get(
             "trigger", by_id["shoto_bms_cell_imbalance_alert"].get("triggers")
         )
-        self.assertEqual(dv_tr[0].get("entity_id"), "sensor.shoto_ils6300_bank_cell_dv_mv")
-        self.assertEqual(dv_tr[0].get("above"), 80)
+        self.assertEqual(dv_tr[0].get("platform", dv_tr[0].get("trigger")), "template")
+        dv_tpl = dv_tr[0].get("value_template", "")
+        self.assertIn("is_number(states('sensor.shoto_ils6300_bank_cell_dv_mv'))", dv_tpl)
+        self.assertIn(">= 80", dv_tpl)
         self.assertEqual(parse_ha_duration_s(dv_tr[0].get("for")), 60)
 
-        # 6. High temp alert (>48 C)
+        # 6. High temp alert (>= 48 C) via exact template trigger
         temp_tr = by_id["shoto_bms_high_temp_alert"].get(
             "trigger", by_id["shoto_bms_high_temp_alert"].get("triggers")
         )
-        self.assertEqual(temp_tr[0].get("entity_id"), "sensor.shoto_ils6300_bank_temp_max")
-        self.assertEqual(temp_tr[0].get("above"), 48)
+        self.assertEqual(temp_tr[0].get("platform", temp_tr[0].get("trigger")), "template")
+        temp_tpl = temp_tr[0].get("value_template", "")
+        self.assertIn("is_number(states('sensor.shoto_ils6300_bank_temp_max'))", temp_tpl)
+        self.assertIn(">= 48", temp_tpl)
         self.assertEqual(parse_ha_duration_s(temp_tr[0].get("for")), 60)
 
         # 7. Bridge offline / Inverter 63H stalled > 2 min
@@ -743,7 +749,12 @@ class TestShotoAutomationsAndScripts(unittest.TestCase):
             "Audit script must press button.shoto_ils6300_btn_audit_eeprom_all",
         )
         delays = [parse_ha_duration_s(s["delay"]) for s in audit_steps if "delay" in s]
-        self.assertTrue(any(d >= 10 for d in delays), "Audit script must wait for EEPROM scan completion")
+        self.assertTrue(any(d >= 25 for d in delays), "Audit script must wait >= 25s for 1..4 pack EEPROM scan completion")
+        audit_strings: list[str] = []
+        collect_yaml_strings(audit_sc, audit_strings)
+        audit_joined = "\n".join(audit_strings)
+        for slot in range(1, 5):
+            self.assertIn(f"binary_sensor.shoto_ils6300_pack{slot}_eep_valid", audit_joined)
         audit_services = [s.get("service", s.get("action")) for s in audit_steps]
         self.assertIn("persistent_notification.create", audit_services)
         self.assertIn("notify.notify", audit_services)
@@ -782,17 +793,17 @@ class TestShotoAutomationsAndScripts(unittest.TestCase):
             f"Automations/scripts reference unknown/orphan entities not in ha_mqtt_codec.hpp: {unknown}",
         )
 
-        # Also catch any bare shoto_ils6300_* entity reference in non-standard domains or typos
+        # Verify all state_attr(..., '<key>') calls reference valid build_pack_eeprom_json() keys
         attr_re = re.compile(
-            r"state_attr\(\s*['\"](binary_sensor\.shoto_ils6300_pack([1-4])_eep_valid)['\"]\s*,\s*['\"]([a-z0-9_]+)['\"]\s*\)"
+            r"state_attr\(\s*[^,]+,\s*['\"]([a-z0-9_]+)['\"]\s*\)"
         )
-        attr_matches = attr_re.findall(joined)
+        attr_keys = attr_re.findall(joined)
         self.assertGreater(
-            len(attr_matches),
+            len(attr_keys),
             0,
-            "Scripts must reference state_attr('binary_sensor.shoto_ils6300_pack*_eep_valid', ...)",
+            "Scripts must reference state_attr(..., '<key>') for pack*_eep_valid",
         )
-        for _eid, _pack_num, attr_key in attr_matches:
+        for attr_key in attr_keys:
             self.assertIn(
                 attr_key,
                 eeprom_keys,
