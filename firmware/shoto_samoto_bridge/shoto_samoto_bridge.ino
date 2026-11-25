@@ -1633,6 +1633,8 @@ static void ha_mqtt_task(void* arg) {
                                               MQTT_TOPIC_PREFIX, static_cast<unsigned>(slot + 1u));
                                 if (g_ha_mqtt.publish(topic_buf, payload_buf, true)) {
                                     last_pub_eeprom_ms[slot] = eep_snap[slot].audited_ms;
+                                } else {
+                                    force_eeprom_pub = true;
                                 }
                             }
                         }
@@ -1880,7 +1882,7 @@ void setup() {
     load_ha_nvs_settings();
 #endif
 
-    Serial.println("\n=== SHOTO <-> SAMOTO BMS BRIDGE v3.1 ===");
+    Serial.printf("\n=== SHOTO <-> SAMOTO BMS BRIDGE v%s ===\n", SW_VERSION);
     Serial.printf("Mode=%s | PolicyApproved=%s | Proto=%s | DynDiscovery=%s | MaxPacks=%d | FixedPacks=%d | HA_MQTT=%d\n",
                   g_bridge_active ? "ACTIVE" : "MONITOR_ONLY",
                   POLICY_USER_APPROVED ? "YES" : "NO",
