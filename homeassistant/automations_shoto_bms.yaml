@@ -1,0 +1,325 @@
+# =============================================================================
+# Otomasi Keselamatan & Notifikasi Shoto BMS - PLTS Samoto ILS6300
+# =============================================================================
+# Pasang dengan menyalin daftar otomasi ini ke `automations.yaml` Home Assistant
+# (atau aktifkan named include di `configuration.yaml`).
+# Seluruh notifikasi HP memakai `notify.notify` dengan `continue_on_error: true`
+# agar tetap aman pada instalasi baru yang belum memiliki aplikasi HP.
+
+- id: shoto_bms_bank_inhibit_alert
+  alias: "Shoto BMS: Peringatan Bank INHIBIT (Fail-Closed)"
+  description: >-
+    Kirim notifikasi saat bridge mengaktifkan mode fail-closed / INHIBIT
+    pada bank baterai PLTS Samoto ILS6300 selama minimal 10 detik.
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.shoto_ils6300_bank_valid
+      to: "off"
+      for: "00:00:10"
+  action:
+    - service: persistent_notification.create
+      data:
+        notification_id: shoto_bms_bank_inhibit_alert
+        title: "[BAHAYA] PLTS Samoto ILS6300 - Inverter INHIBIT Aktif"
+        message: >-
+          Site: PLTS Samoto ILS6300.
+          Bridge menghentikan izin charge/discharge (fail-closed) karena alasan:
+          {{ states('sensor.shoto_ils6300_bank_inhibit_reason') }}.
+          Tegangan Bank: {{ states('sensor.shoto_ils6300_bank_voltage') }} V |
+          SOC: {{ states('sensor.shoto_ils6300_bank_soc') }} % |
+          Delta V: {{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }} mV |
+          Pack Online: {{ states('sensor.shoto_ils6300_bank_pack_count') }} / 4 |
+          Prot/Fault: {{ states('sensor.shoto_ils6300_bank_prot_flags') }}/{{ states('sensor.shoto_ils6300_bank_fault_flags') }}.
+    - service: notify.notify
+      continue_on_error: true
+      data:
+        title: "[BAHAYA] PLTS Samoto ILS6300 - Bank INHIBIT"
+        message: >-
+          PLTS Samoto ILS6300 INHIBIT ({{ states('sensor.shoto_ils6300_bank_inhibit_reason') }}).
+          V={{ states('sensor.shoto_ils6300_bank_voltage') }}V,
+          SOC={{ states('sensor.shoto_ils6300_bank_soc') }}%,
+          dV={{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }}mV,
+          Packs={{ states('sensor.shoto_ils6300_bank_pack_count') }}/4.
+        data:
+          ttl: 0
+          priority: high
+          importance: high
+
+- id: shoto_bms_pack_offline_alert
+  alias: "Shoto BMS: Peringatan Pack Offline / Hot-Unplug"
+  description: >-
+    Deteksi jika salah satu pack yang sebelumnya online (on) terputus (off)
+    selama 30 detik. Menggunakan from: on agar slot cadangan #3/#4 yang memang
+    kosong tidak memicu false alert.
+  mode: queued
+  max: 4
+  trigger:
+    - platform: state
+      entity_id:
+        - binary_sensor.shoto_ils6300_pack1_online
+        - binary_sensor.shoto_ils6300_pack2_online
+        - binary_sensor.shoto_ils6300_pack3_online
+        - binary_sensor.shoto_ils6300_pack4_online
+      from: "on"
+      to: "off"
+      for: "00:00:30"
+  action:
+    - service: persistent_notification.create
+      data:
+        notification_id: "shoto_bms_pack_offline_{{ trigger.entity_id }}"
+        title: "[PERINGATAN] PLTS Samoto ILS6300 - Pack Baterai Offline"
+        message: >-
+          Site: PLTS Samoto ILS6300.
+          Baterai {{ trigger.to_state.name | default(trigger.entity_id) }}
+          terputus / offline (on -> off > 30 detik).
+          Pack Online tersisa: {{ states('sensor.shoto_ils6300_bank_pack_count') }} / 4 |
+          SOC Bank: {{ states('sensor.shoto_ils6300_bank_soc') }} % |
+          Delta V: {{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }} mV |
+          Alasan Status: {{ states('sensor.shoto_ils6300_bank_inhibit_reason') }}.
+    - service: notify.notify
+      continue_on_error: true
+      data:
+        title: "[PERINGATAN] PLTS Samoto ILS6300 - Pack Offline"
+        message: >-
+          PLTS Samoto ILS6300: {{ trigger.to_state.name | default(trigger.entity_id) }} offline!
+          Pack aktif={{ states('sensor.shoto_ils6300_bank_pack_count') }}/4,
+          SOC={{ states('sensor.shoto_ils6300_bank_soc') }}%,
+          dV={{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }}mV.
+
+- id: shoto_bms_low_soc_warning
+  alias: "Shoto BMS: Peringatan SOC Rendah (< 25%)"
+  description: >-
+    Peringatan dini saat SOC bank baterai PLTS Samoto ILS6300 turun di bawah
+    25% selama minimal 1 menit.
+  mode: single
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.shoto_ils6300_bank_soc
+      below: 25
+      for: "00:01:00"
+  action:
+    - service: persistent_notification.create
+      data:
+        notification_id: shoto_bms_low_soc_warning
+        title: "[PERINGATAN] PLTS Samoto ILS6300 - SOC Baterai Rendah (< 25%)"
+        message: >-
+          Site: PLTS Samoto ILS6300.
+          SOC bank baterai turun ke {{ states('sensor.shoto_ils6300_bank_soc') }} % (< 25%).
+          Tegangan Bank: {{ states('sensor.shoto_ils6300_bank_voltage') }} V |
+          Delta V: {{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }} mV |
+          Pack Online: {{ states('sensor.shoto_ils6300_bank_pack_count') }} / 4 |
+          Alasan Status: {{ states('sensor.shoto_ils6300_bank_inhibit_reason') }}.
+    - service: notify.notify
+      continue_on_error: true
+      data:
+        title: "[PERINGATAN] PLTS Samoto ILS6300 - SOC < 25%"
+        message: >-
+          PLTS Samoto ILS6300 SOC rendah: {{ states('sensor.shoto_ils6300_bank_soc') }}%
+          (V={{ states('sensor.shoto_ils6300_bank_voltage') }}V,
+          dV={{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }}mV).
+          Siapkan pengisian atau kurangi beban.
+
+- id: shoto_bms_low_soc_critical
+  alias: "Shoto BMS: Peringatan KRITIS SOC Sangat Rendah (< 20%)"
+  description: >-
+    Peringatan prioritas tinggi saat SOC bank baterai PLTS Samoto ILS6300
+    turun di bawah 20% selama minimal 30 detik.
+  mode: single
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.shoto_ils6300_bank_soc
+      below: 20
+      for: "00:00:30"
+  action:
+    - service: persistent_notification.create
+      data:
+        notification_id: shoto_bms_low_soc_critical
+        title: "[KRITIS] PLTS Samoto ILS6300 - SOC Baterai Kritis (< 20%)"
+        message: >-
+          Site: PLTS Samoto ILS6300.
+          PERINGATAN KRITIS: SOC bank baterai tinggal {{ states('sensor.shoto_ils6300_bank_soc') }} % (< 20%)!
+          Tegangan Bank: {{ states('sensor.shoto_ils6300_bank_voltage') }} V |
+          Delta V: {{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }} mV |
+          Pack Online: {{ states('sensor.shoto_ils6300_bank_pack_count') }} / 4 |
+          Alasan Status: {{ states('sensor.shoto_ils6300_bank_inhibit_reason') }}.
+          Segera alihkan beban berat atau pastikan input PLN/PV tersedia.
+    - service: notify.notify
+      continue_on_error: true
+      data:
+        title: "[KRITIS] PLTS Samoto ILS6300 - SOC < 20%!"
+        message: >-
+          KRITIS PLTS Samoto ILS6300: SOC={{ states('sensor.shoto_ils6300_bank_soc') }}%!
+          V={{ states('sensor.shoto_ils6300_bank_voltage') }}V,
+          dV={{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }}mV.
+          Segera kurangi beban!
+        data:
+          ttl: 0
+          priority: high
+          importance: high
+          channel: alarm_stream
+
+- id: shoto_bms_cell_imbalance_alert
+  alias: "Shoto BMS: Peringatan Ketidakseimbangan Sel (Delta V > 80 mV)"
+  description: >-
+    Kirim notifikasi jika selisih tegangan sel tertinggi dan terendah bank
+    melebihi 80 mV selama minimal 1 menit.
+  mode: single
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.shoto_ils6300_bank_cell_dv_mv
+      above: 80
+      for: "00:01:00"
+  action:
+    - service: persistent_notification.create
+      data:
+        notification_id: shoto_bms_cell_imbalance_alert
+        title: "[PERINGATAN] PLTS Samoto ILS6300 - Ketidakseimbangan Sel Tinggi"
+        message: >-
+          Site: PLTS Samoto ILS6300.
+          Delta V sel bank mencapai {{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }} mV (> 80 mV).
+          Sel Min/Max: {{ states('sensor.shoto_ils6300_bank_cell_min_mv') }} /
+          {{ states('sensor.shoto_ils6300_bank_cell_max_mv') }} mV |
+          SOC: {{ states('sensor.shoto_ils6300_bank_soc') }} % |
+          Alasan Status: {{ states('sensor.shoto_ils6300_bank_inhibit_reason') }}.
+    - service: notify.notify
+      continue_on_error: true
+      data:
+        title: "[PERINGATAN] PLTS Samoto ILS6300 - Delta V > 80 mV"
+        message: >-
+          PLTS Samoto ILS6300 Delta V={{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }}mV
+          ({{ states('sensor.shoto_ils6300_bank_cell_min_mv') }}-{{ states('sensor.shoto_ils6300_bank_cell_max_mv') }}mV),
+          SOC={{ states('sensor.shoto_ils6300_bank_soc') }}%.
+
+- id: shoto_bms_high_temp_alert
+  alias: "Shoto BMS: Peringatan Suhu Baterai Tinggi (> 48 C)"
+  description: >-
+    Kirim notifikasi jika suhu maksimum sel/BMS pada bank baterai melebihi
+    48 C selama minimal 1 menit.
+  mode: single
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.shoto_ils6300_bank_temp_max
+      above: 48
+      for: "00:01:00"
+  action:
+    - service: persistent_notification.create
+      data:
+        notification_id: shoto_bms_high_temp_alert
+        title: "[BAHAYA] PLTS Samoto ILS6300 - Suhu Baterai Tinggi (> 48 C)"
+        message: >-
+          Site: PLTS Samoto ILS6300.
+          Suhu maksimum bank mencapai {{ states('sensor.shoto_ils6300_bank_temp_max') }} C (> 48 C),
+          suhu minimum {{ states('sensor.shoto_ils6300_bank_temp_min') }} C.
+          SOC: {{ states('sensor.shoto_ils6300_bank_soc') }} % |
+          Delta V: {{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }} mV |
+          Alasan Status: {{ states('sensor.shoto_ils6300_bank_inhibit_reason') }}.
+          Periksa ventilasi ruang baterai dan arus beban.
+    - service: notify.notify
+      continue_on_error: true
+      data:
+        title: "[BAHAYA] PLTS Samoto ILS6300 - Suhu > 48 C"
+        message: >-
+          PLTS Samoto ILS6300 suhu maks={{ states('sensor.shoto_ils6300_bank_temp_max') }}C!
+          SOC={{ states('sensor.shoto_ils6300_bank_soc') }}%,
+          dV={{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }}mV. Periksa ventilasi!
+        data:
+          ttl: 0
+          priority: high
+          importance: high
+
+- id: shoto_bms_bridge_or_inverter_stalled_alert
+  alias: "Shoto BMS: Bridge ESP32 Offline atau Polling 63H Inverter Macet (> 2 Menit)"
+  description: >-
+    Deteksi jika ESP32 bridge offline (bank_valid unavailable >= 2 menit) atau
+    counter 63H inverter berhenti bertambah > 120 detik saat bridge online
+    dan mode inverter bukan IDLE_OTHER.
+  mode: single
+  trigger:
+    - platform: state
+      id: bridge_offline
+      entity_id: binary_sensor.shoto_ils6300_bank_valid
+      to: "unavailable"
+      for: "00:02:00"
+    - platform: time_pattern
+      id: inv_63_stalled
+      minutes: "/1"
+  condition:
+    - condition: or
+      conditions:
+        - condition: trigger
+          id: bridge_offline
+        - condition: and
+          conditions:
+            - condition: trigger
+              id: inv_63_stalled
+            - condition: template
+              value_template: >-
+                {{ states('binary_sensor.shoto_ils6300_bank_valid') not in ['unknown', 'unavailable']
+                   and states('sensor.shoto_ils6300_diag_inv_mode') not in ['IDLE_OTHER', 'unknown', 'unavailable']
+                   and states.sensor.shoto_ils6300_diag_inv_63 is defined
+                   and states('sensor.shoto_ils6300_diag_inv_63') not in ['unknown', 'unavailable']
+                   and (as_timestamp(now()) - as_timestamp(states.sensor.shoto_ils6300_diag_inv_63.last_updated, 0)) > 120
+                   and (((as_timestamp(now()) - as_timestamp(this.attributes.get('last_triggered'), 0)) > 600) if (this is defined and this.attributes is defined) else true) }}
+  action:
+    - service: persistent_notification.create
+      data:
+        notification_id: shoto_bms_bridge_or_inverter_stalled_alert
+        title: >-
+          {% if trigger.id == 'bridge_offline' %}
+          [BAHAYA] PLTS Samoto ILS6300 - ESP32 Bridge Offline
+          {% else %}
+          [PERINGATAN] PLTS Samoto ILS6300 - Polling 63H Inverter Macet
+          {% endif %}
+        message: >-
+          Site: PLTS Samoto ILS6300.
+          {% if trigger.id == 'bridge_offline' %}
+          Bridge ESP32 berstatus unavailable selama lebih dari 2 menit (cek daya ESP32, Wi-Fi, atau broker MQTT).
+          {% else %}
+          Counter frame 63H inverter ({{ states('sensor.shoto_ils6300_diag_inv_63') }}) tidak bertambah lebih dari 120 detik
+          saat mode inverter {{ states('sensor.shoto_ils6300_diag_inv_mode') }}. Periksa kabel RS485 ke Samoto ILS6300!
+          {% endif %}
+          SOC terakhir: {{ states('sensor.shoto_ils6300_bank_soc') }} % |
+          Delta V: {{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }} mV |
+          Alasan Status: {{ states('sensor.shoto_ils6300_bank_inhibit_reason') }}.
+    - service: notify.notify
+      continue_on_error: true
+      data:
+        title: >-
+          {% if trigger.id == 'bridge_offline' %}
+          [BAHAYA] PLTS Samoto ILS6300 - Bridge Offline
+          {% else %}
+          [PERINGATAN] PLTS Samoto ILS6300 - 63H Inverter Macet
+          {% endif %}
+        message: >-
+          {% if trigger.id == 'bridge_offline' %}
+          PLTS Samoto ILS6300 ESP32 bridge unavailable > 2 menit!
+          {% else %}
+          PLTS Samoto ILS6300 polling 63H inverter macet > 120s (mode={{ states('sensor.shoto_ils6300_diag_inv_mode') }}).
+          {% endif %}
+          SOC={{ states('sensor.shoto_ils6300_bank_soc') }}%,
+          dV={{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }}mV.
+
+- id: shoto_bms_maint_unlock_auto_relock
+  alias: "Shoto BMS: Backup Auto-Relock Maintenance Unlock (5 Menit)"
+  description: >-
+    Pengaman cadangan di sisi Home Assistant untuk mengunci kembali
+    switch Maintenance Unlock setelah aktif selama 5 menit (300 detik).
+  mode: single
+  trigger:
+    - platform: state
+      entity_id: switch.shoto_ils6300_sw_maint_unlock
+      to: "on"
+      for: "00:05:00"
+  action:
+    - service: switch.turn_off
+      target:
+        entity_id: switch.shoto_ils6300_sw_maint_unlock
+    - service: persistent_notification.create
+      data:
+        notification_id: shoto_bms_maint_unlock_auto_relock
+        title: "[INFO] PLTS Samoto ILS6300 - Maintenance Unlock Dikunci Otomatis"
+        message: >-
+          Site: PLTS Samoto ILS6300.
+          Maintenance Unlock telah aktif selama 5 menit dan dikunci kembali
+          secara otomatis oleh otomasi pengaman Home Assistant.

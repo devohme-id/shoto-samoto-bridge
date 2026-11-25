@@ -41,7 +41,7 @@ HA_DISC_TYPE_TO_DOMAIN = {
 }
 
 
-def load_yaml_file(path: Path) -> dict:
+def load_yaml_any(path: Path):
     """Parse a YAML file using PyYAML if installed, else Ruby stdlib Psych."""
     text = path.read_text(encoding="utf-8")
     if _pyyaml is not None:
@@ -56,28 +56,32 @@ def load_yaml_file(path: Path) -> dict:
                 tag,
                 lambda loader, node, _t=tag: f"{_t} {loader.construct_scalar(node)}",
             )
-        data = _pyyaml.load(text, Loader=_HALoader)
-    else:
-        ruby_bin = shutil.which("ruby")
-        if ruby_bin is None:
-            raise RuntimeError(
-                "YAML parser unavailable: install Python 'pyyaml' or ensure 'ruby' is on PATH."
-            )
-        ruby_script = (
-            "require 'yaml'; require 'json'; "
-            "data = YAML.load(ARGF.read); "
-            "puts JSON.generate(data)"
-        )
-        proc = subprocess.run(
-            [ruby_bin, "-e", ruby_script, str(path)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if proc.returncode != 0:
-            raise ValueError(f"YAML parse failed for {path}: {proc.stderr.strip()}")
-        data = json.loads(proc.stdout)
+        return _pyyaml.load(text, Loader=_HALoader)
 
+    ruby_bin = shutil.which("ruby")
+    if ruby_bin is None:
+        raise RuntimeError(
+            "YAML parser unavailable: install Python 'pyyaml' or ensure 'ruby' is on PATH."
+        )
+    ruby_script = (
+        "require 'yaml'; require 'json'; "
+        "data = YAML.load(ARGF.read); "
+        "puts JSON.generate(data)"
+    )
+    proc = subprocess.run(
+        [ruby_bin, "-e", ruby_script, str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise ValueError(f"YAML parse failed for {path}: {proc.stderr.strip()}")
+    return json.loads(proc.stdout)
+
+
+def load_yaml_file(path: Path) -> dict:
+    """Parse a YAML mapping file using PyYAML if installed, else Ruby stdlib Psych."""
+    data = load_yaml_any(path)
     if not isinstance(data, dict):
         raise ValueError(f"Expected YAML mapping at top level of {path}")
     return data
@@ -506,6 +510,294 @@ class TestShotoLovelaceDashboard(unittest.TestCase):
             "button.shoto_ils6300_btn_restart",
         ):
             self.assertIn(critical_ent, on_joined)
+
+
+def parse_ha_duration_s(val) -> int:
+    """Parse a Home Assistant duration ('HH:MM:SS', int seconds, or dict) into seconds."""
+    if isinstance(val, (int, float)):
+        return int(val)
+    if isinstance(val, str):
+        parts = val.strip().split(":")
+        if len(parts) == 3 and all(p.isdigit() for p in parts):
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+    if isinstance(val, dict):
+        return (
+            int(val.get("hours", 0)) * 3600
+            + int(val.get("minutes", 0)) * 60
+            + int(val.get("seconds", 0))
+        )
+    raise AssertionError(f"Unsupported HA duration format: {val!r}")
+
+
+def collect_yaml_strings(node, out: list[str]) -> None:
+    if isinstance(node, dict):
+        for v in node.values():
+            collect_yaml_strings(v, out)
+    elif isinstance(node, list):
+        for item in node:
+            collect_yaml_strings(item, out)
+    elif isinstance(node, str):
+        out.append(node)
+
+
+def extract_action_steps(actions) -> list[dict]:
+    """Flatten action/sequence step dicts (including choose/if branches) for inspection."""
+    steps: list[dict] = []
+    if isinstance(actions, dict):
+        actions = [actions]
+    if not isinstance(actions, list):
+        return steps
+    for step in actions:
+        if not isinstance(step, dict):
+            continue
+        steps.append(step)
+        if "choose" in step and isinstance(step["choose"], list):
+            for branch in step["choose"]:
+                if isinstance(branch, dict):
+                    steps.extend(extract_action_steps(branch.get("sequence", [])))
+            if "default" in step:
+                steps.extend(extract_action_steps(step["default"]))
+        for sub_key in ("then", "else", "sequence"):
+            if sub_key in step:
+                steps.extend(extract_action_steps(step[sub_key]))
+    return steps
+
+
+class TestShotoAutomationsAndScripts(unittest.TestCase):
+    AUTOMATIONS_PATH = HA_DIR / "automations_shoto_bms.yaml"
+    SCRIPTS_PATH = HA_DIR / "scripts_shoto_bms.yaml"
+
+    REQUIRED_AUTOMATION_IDS = (
+        "shoto_bms_bank_inhibit_alert",
+        "shoto_bms_pack_offline_alert",
+        "shoto_bms_low_soc_warning",
+        "shoto_bms_low_soc_critical",
+        "shoto_bms_cell_imbalance_alert",
+        "shoto_bms_high_temp_alert",
+        "shoto_bms_bridge_or_inverter_stalled_alert",
+        "shoto_bms_maint_unlock_auto_relock",
+    )
+
+    REQUIRED_SCRIPT_IDS = (
+        "shoto_test_notification",
+        "shoto_audit_all_packs_and_notify",
+    )
+
+    def test_automations_yaml_structure_triggers_and_safety(self):
+        self.assertTrue(
+            self.AUTOMATIONS_PATH.is_file(),
+            f"Missing automations YAML: {self.AUTOMATIONS_PATH}",
+        )
+        automations = load_yaml_any(self.AUTOMATIONS_PATH)
+        self.assertIsInstance(automations, list)
+        self.assertGreaterEqual(len(automations), len(self.REQUIRED_AUTOMATION_IDS))
+
+        seen_ids: set[str] = set()
+        seen_aliases: set[str] = set()
+        by_id: dict[str, dict] = {}
+        for item in automations:
+            self.assertIsInstance(item, dict)
+            aid = item.get("id")
+            alias = item.get("alias")
+            self.assertIsInstance(aid, str)
+            self.assertTrue(aid.strip())
+            self.assertIsInstance(alias, str)
+            self.assertTrue(alias.strip())
+            self.assertNotIn(aid, seen_ids, f"Duplicate automation id: {aid}")
+            self.assertNotIn(alias, seen_aliases, f"Duplicate automation alias: {alias}")
+            seen_ids.add(aid)
+            seen_aliases.add(alias)
+            self.assertTrue(item.get("trigger") or item.get("triggers"))
+            self.assertTrue(item.get("action") or item.get("actions"))
+            by_id[aid] = item
+
+        for req_id in self.REQUIRED_AUTOMATION_IDS:
+            self.assertIn(req_id, by_id, f"Missing required automation: {req_id}")
+
+        # 1. Bank inhibit alert
+        inhibit_triggers = by_id["shoto_bms_bank_inhibit_alert"].get(
+            "trigger", by_id["shoto_bms_bank_inhibit_alert"].get("triggers")
+        )
+        self.assertEqual(inhibit_triggers[0].get("entity_id"), "binary_sensor.shoto_ils6300_bank_valid")
+        self.assertEqual(inhibit_triggers[0].get("to"), "off")
+        self.assertEqual(parse_ha_duration_s(inhibit_triggers[0].get("for")), 10)
+
+        # 2. Pack offline / hot-unplug alert (only on->off for 30s so unused slots 3/4 don't false-alert)
+        pack_off_triggers = by_id["shoto_bms_pack_offline_alert"].get(
+            "trigger", by_id["shoto_bms_pack_offline_alert"].get("triggers")
+        )
+        self.assertEqual(
+            pack_off_triggers[0].get("entity_id"),
+            [f"binary_sensor.shoto_ils6300_pack{i}_online" for i in range(1, 5)],
+        )
+        self.assertEqual(pack_off_triggers[0].get("from"), "on")
+        self.assertEqual(pack_off_triggers[0].get("to"), "off")
+        self.assertEqual(parse_ha_duration_s(pack_off_triggers[0].get("for")), 30)
+
+        # 3 & 4. Low SOC warning (<25) & critical (<20)
+        soc_warn_tr = by_id["shoto_bms_low_soc_warning"].get(
+            "trigger", by_id["shoto_bms_low_soc_warning"].get("triggers")
+        )
+        self.assertEqual(soc_warn_tr[0].get("platform", soc_warn_tr[0].get("trigger")), "numeric_state")
+        self.assertEqual(soc_warn_tr[0].get("entity_id"), "sensor.shoto_ils6300_bank_soc")
+        self.assertEqual(soc_warn_tr[0].get("below"), 25)
+        self.assertEqual(parse_ha_duration_s(soc_warn_tr[0].get("for")), 60)
+
+        soc_crit_tr = by_id["shoto_bms_low_soc_critical"].get(
+            "trigger", by_id["shoto_bms_low_soc_critical"].get("triggers")
+        )
+        self.assertEqual(soc_crit_tr[0].get("platform", soc_crit_tr[0].get("trigger")), "numeric_state")
+        self.assertEqual(soc_crit_tr[0].get("entity_id"), "sensor.shoto_ils6300_bank_soc")
+        self.assertEqual(soc_crit_tr[0].get("below"), 20)
+        self.assertEqual(parse_ha_duration_s(soc_crit_tr[0].get("for")), 30)
+
+        # 5. Cell imbalance alert (>80 mV)
+        dv_tr = by_id["shoto_bms_cell_imbalance_alert"].get(
+            "trigger", by_id["shoto_bms_cell_imbalance_alert"].get("triggers")
+        )
+        self.assertEqual(dv_tr[0].get("entity_id"), "sensor.shoto_ils6300_bank_cell_dv_mv")
+        self.assertEqual(dv_tr[0].get("above"), 80)
+        self.assertEqual(parse_ha_duration_s(dv_tr[0].get("for")), 60)
+
+        # 6. High temp alert (>48 C)
+        temp_tr = by_id["shoto_bms_high_temp_alert"].get(
+            "trigger", by_id["shoto_bms_high_temp_alert"].get("triggers")
+        )
+        self.assertEqual(temp_tr[0].get("entity_id"), "sensor.shoto_ils6300_bank_temp_max")
+        self.assertEqual(temp_tr[0].get("above"), 48)
+        self.assertEqual(parse_ha_duration_s(temp_tr[0].get("for")), 60)
+
+        # 7. Bridge offline / Inverter 63H stalled > 2 min
+        stalled_auto = by_id["shoto_bms_bridge_or_inverter_stalled_alert"]
+        stalled_strings: list[str] = []
+        collect_yaml_strings(stalled_auto, stalled_strings)
+        stalled_joined = "\n".join(stalled_strings)
+        self.assertIn("binary_sensor.shoto_ils6300_bank_valid", stalled_joined)
+        self.assertIn("sensor.shoto_ils6300_diag_inv_63", stalled_joined)
+        self.assertIn("unavailable", stalled_joined)
+
+        # 8. Maintenance unlock backup auto-relock <= 300s (5 minutes)
+        relock_auto = by_id["shoto_bms_maint_unlock_auto_relock"]
+        relock_tr = relock_auto.get("trigger", relock_auto.get("triggers"))
+        self.assertEqual(relock_tr[0].get("entity_id"), "switch.shoto_ils6300_sw_maint_unlock")
+        self.assertEqual(relock_tr[0].get("to"), "on")
+        relock_s = parse_ha_duration_s(relock_tr[0].get("for"))
+        self.assertGreater(relock_s, 0)
+        self.assertLessEqual(relock_s, 300, "Maintenance unlock auto-relock must be <= 5 minutes (300s)")
+        relock_steps = extract_action_steps(relock_auto.get("action", relock_auto.get("actions")))
+        self.assertTrue(
+            any(
+                s.get("service", s.get("action")) == "switch.turn_off"
+                and s.get("target", {}).get("entity_id") == "switch.shoto_ils6300_sw_maint_unlock"
+                for s in relock_steps
+            ),
+            "Auto-relock must call switch.turn_off on switch.shoto_ils6300_sw_maint_unlock",
+        )
+
+        # Every alert automation must create persistent_notification and guard notify.notify with continue_on_error: true
+        for alert_id in self.REQUIRED_AUTOMATION_IDS[:-1]:
+            auto = by_id[alert_id]
+            steps = extract_action_steps(auto.get("action", auto.get("actions")))
+            services = [s.get("service", s.get("action")) for s in steps]
+            self.assertIn("persistent_notification.create", services, f"{alert_id} missing persistent_notification.create")
+            notify_steps = [s for s in steps if s.get("service", s.get("action")) == "notify.notify"]
+            self.assertTrue(notify_steps, f"{alert_id} missing notify.notify")
+            for ns in notify_steps:
+                self.assertIs(ns.get("continue_on_error"), True, f"{alert_id} notify.notify must set continue_on_error: true")
+            strings: list[str] = []
+            collect_yaml_strings(auto, strings)
+            self.assertIn("PLTS Samoto ILS6300", "\n".join(strings), f"{alert_id} missing HA_SITE_NAME")
+
+    def test_scripts_yaml_structure_and_read_only_audit(self):
+        self.assertTrue(
+            self.SCRIPTS_PATH.is_file(),
+            f"Missing scripts YAML: {self.SCRIPTS_PATH}",
+        )
+        scripts = load_yaml_file(self.SCRIPTS_PATH)
+        for req_id in self.REQUIRED_SCRIPT_IDS:
+            self.assertIn(req_id, scripts, f"Missing required script: {req_id}")
+            sc = scripts[req_id]
+            self.assertIsInstance(sc, dict)
+            self.assertTrue(sc.get("alias"))
+            self.assertIsInstance(sc.get("sequence"), list)
+            self.assertGreater(len(sc["sequence"]), 0)
+
+        # Test notification script
+        test_notif = scripts["shoto_test_notification"]
+        test_steps = extract_action_steps(test_notif["sequence"])
+        test_services = [s.get("service", s.get("action")) for s in test_steps]
+        self.assertIn("persistent_notification.create", test_services)
+        self.assertIn("notify.notify", test_services)
+        for ns in [s for s in test_steps if s.get("service", s.get("action")) == "notify.notify"]:
+            self.assertIs(ns.get("continue_on_error"), True)
+
+        # Audit EEPROM all packs script (strictly read-only)
+        audit_sc = scripts["shoto_audit_all_packs_and_notify"]
+        audit_steps = extract_action_steps(audit_sc["sequence"])
+        self.assertTrue(
+            any(
+                s.get("service", s.get("action")) == "button.press"
+                and s.get("target", {}).get("entity_id") == "button.shoto_ils6300_btn_audit_eeprom_all"
+                for s in audit_steps
+            ),
+            "Audit script must press button.shoto_ils6300_btn_audit_eeprom_all",
+        )
+        delays = [parse_ha_duration_s(s["delay"]) for s in audit_steps if "delay" in s]
+        self.assertTrue(any(d >= 10 for d in delays), "Audit script must wait for EEPROM scan completion")
+        audit_services = [s.get("service", s.get("action")) for s in audit_steps]
+        self.assertIn("persistent_notification.create", audit_services)
+        self.assertIn("notify.notify", audit_services)
+        for ns in [s for s in audit_steps if s.get("service", s.get("action")) == "notify.notify"]:
+            self.assertIs(ns.get("continue_on_error"), True)
+
+        # Ensure zero Shoto EEPROM write commands anywhere in automations/scripts
+        raw_combined = (
+            self.AUTOMATIONS_PATH.read_text(encoding="utf-8")
+            + "\n"
+            + self.SCRIPTS_PATH.read_text(encoding="utf-8")
+        )
+        self.assertNotIn("0xAA", raw_combined.upper().replace("0XAA", "0xAA"))
+
+    def test_automations_and_scripts_entities_and_attrs_match_firmware(self):
+        dev_id = parse_ha_device_id()
+        expected_entities = parse_discovery_entities(dev_id, max_packs=4)
+        eeprom_keys = parse_eeprom_json_keys()
+
+        automations = load_yaml_any(self.AUTOMATIONS_PATH)
+        scripts = load_yaml_file(self.SCRIPTS_PATH)
+
+        strings: list[str] = []
+        collect_yaml_strings(automations, strings)
+        collect_yaml_strings(scripts, strings)
+        joined = "\n".join(strings)
+
+        entity_re = re.compile(r"\b[a-z_]+\.shoto_[a-z0-9_]+\b")
+        referenced_entities = set(entity_re.findall(joined))
+        self.assertGreater(len(referenced_entities), 0)
+
+        unknown = sorted(referenced_entities - expected_entities)
+        self.assertEqual(
+            unknown,
+            [],
+            f"Automations/scripts reference unknown/orphan entities not in ha_mqtt_codec.hpp: {unknown}",
+        )
+
+        # Also catch any bare shoto_ils6300_* entity reference in non-standard domains or typos
+        attr_re = re.compile(
+            r"state_attr\(\s*['\"](binary_sensor\.shoto_ils6300_pack([1-4])_eep_valid)['\"]\s*,\s*['\"]([a-z0-9_]+)['\"]\s*\)"
+        )
+        attr_matches = attr_re.findall(joined)
+        self.assertGreater(
+            len(attr_matches),
+            0,
+            "Scripts must reference state_attr('binary_sensor.shoto_ils6300_pack*_eep_valid', ...)",
+        )
+        for _eid, _pack_num, attr_key in attr_matches:
+            self.assertIn(
+                attr_key,
+                eeprom_keys,
+                f"Scripts reference unknown EEPROM attribute '{attr_key}'",
+            )
 
 
 if __name__ == "__main__":
