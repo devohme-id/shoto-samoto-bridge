@@ -1,0 +1,951 @@
+title: PLTS Samoto ILS6300 - Shoto BMS
+views:
+  # ===========================================================================
+  # VIEW 1: Overview & Power Flow
+  # ===========================================================================
+  - title: Overview & Power Flow
+    path: overview
+    icon: mdi:battery-charging-high
+    cards:
+      - type: conditional
+        conditions:
+          - condition: state
+            entity: binary_sensor.shoto_ils6300_bank_valid
+            state: "off"
+        card:
+          type: markdown
+          title: PERINGATAN INHIBIT / FAIL-CLOSED
+          content: |
+            > **INVERTER INHIBIT AKTIF** — Bridge menghentikan izin charge/discharge demi keselamatan bank baterai.
+            - **Alasan Inhibit:** `{{ states('sensor.shoto_ils6300_bank_inhibit_reason') }}`
+            - **Pack Online:** {{ states('sensor.shoto_ils6300_bank_pack_count') }} / 4
+            - **Delta V Bank:** {{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }} mV
+            - **Flag Proteksi / Fault:** `prot={{ states('sensor.shoto_ils6300_bank_prot_flags') }}` | `fault={{ states('sensor.shoto_ils6300_bank_fault_flags') }}`
+
+      - type: horizontal-stack
+        cards:
+          - type: gauge
+            entity: sensor.shoto_ils6300_bank_soc
+            name: Bank SOC
+            min: 0
+            max: 100
+            needle: true
+            severity:
+              green: 35
+              yellow: 18
+              red: 0
+          - type: gauge
+            entity: sensor.shoto_ils6300_bank_power
+            name: Daya Bank (+Chg / -Dsg)
+            min: -6500
+            max: 6500
+            needle: true
+
+      - type: grid
+        columns: 3
+        square: false
+        cards:
+          - type: tile
+            entity: sensor.shoto_ils6300_bank_voltage
+            name: Tegangan Bank
+          - type: tile
+            entity: sensor.shoto_ils6300_bank_current
+            name: Arus Bank
+          - type: tile
+            entity: sensor.shoto_ils6300_bank_pack_count
+            name: Pack Online
+          - type: tile
+            entity: sensor.shoto_ils6300_bank_soh
+            name: Bank SOH
+          - type: tile
+            entity: sensor.shoto_ils6300_bank_rem_cap_ah
+            name: Sisa Kapasitas
+          - type: tile
+            entity: sensor.shoto_ils6300_bank_cycles
+            name: Siklus Bank
+
+      - type: entities
+        title: Status Bank & Limit 63H Inverter (PYL_FULL)
+        show_header_toggle: false
+        entities:
+          - entity: binary_sensor.shoto_ils6300_bank_valid
+            name: Bank Valid
+          - entity: sensor.shoto_ils6300_bank_inhibit_reason
+            name: Alasan Inhibit
+          - entity: sensor.shoto_ils6300_diag_inv_mode
+            name: Mode Inverter
+          - entity: sensor.shoto_ils6300_diag_proto
+            name: Protokol Shoto
+          - entity: binary_sensor.shoto_ils6300_bank_allow_charge
+            name: Izin Charge (63H)
+          - entity: binary_sensor.shoto_ils6300_bank_allow_discharge
+            name: Izin Discharge (63H)
+          - entity: sensor.shoto_ils6300_bank_cvl
+            name: Charge Voltage Limit (CVL)
+          - entity: sensor.shoto_ils6300_bank_dvl
+            name: Discharge Voltage Limit (DVL)
+          - entity: sensor.shoto_ils6300_bank_ccl
+            name: Charge Current Limit (CCL)
+          - entity: sensor.shoto_ils6300_bank_dcl
+            name: Discharge Current Limit (DCL)
+          - entity: sensor.shoto_ils6300_bank_capacity_ah
+            name: Kapasitas Terdaftar (Ah)
+          - entity: sensor.shoto_ils6300_bank_raw_soc
+            name: Raw SOC Bank
+
+      - type: entities
+        title: Envelope Sel & Suhu Bank
+        show_header_toggle: false
+        entities:
+          - entity: sensor.shoto_ils6300_bank_cell_min_mv
+            name: Sel Terendah (Bank)
+          - entity: sensor.shoto_ils6300_bank_cell_max_mv
+            name: Sel Tertinggi (Bank)
+          - entity: sensor.shoto_ils6300_bank_cell_dv_mv
+            name: Delta V Sel (Bank)
+          - entity: sensor.shoto_ils6300_bank_temp_min
+            name: Suhu Minimum
+          - entity: sensor.shoto_ils6300_bank_temp_max
+            name: Suhu Maksimum
+          - entity: sensor.shoto_ils6300_bank_temp_avg
+            name: Suhu Rata-rata
+          - entity: sensor.shoto_ils6300_bank_warn_flags
+            name: Bank Warn Flags
+          - entity: sensor.shoto_ils6300_bank_prot_flags
+            name: Bank Prot Flags
+          - entity: sensor.shoto_ils6300_bank_fault_flags
+            name: Bank Fault Flags
+
+      - type: history-graph
+        title: Histori 24 Jam - SOC & Tegangan Bank
+        hours_to_show: 24
+        entities:
+          - entity: sensor.shoto_ils6300_bank_soc
+            name: SOC (%)
+          - entity: sensor.shoto_ils6300_bank_voltage
+            name: Tegangan (V)
+
+      - type: history-graph
+        title: Histori 24 Jam - Arus & Daya Bank
+        hours_to_show: 24
+        entities:
+          - entity: sensor.shoto_ils6300_bank_current
+            name: Arus (A)
+          - entity: sensor.shoto_ils6300_bank_power
+            name: Daya (W)
+
+      - type: history-graph
+        title: Histori 24 Jam - Delta V Sel & Suhu Maks Bank
+        hours_to_show: 24
+        entities:
+          - entity: sensor.shoto_ils6300_bank_cell_dv_mv
+            name: Delta V (mV)
+          - entity: sensor.shoto_ils6300_bank_temp_max
+            name: Suhu Maks (C)
+
+  # ===========================================================================
+  # VIEW 2: Packs & 15-Cell Matrix
+  # ===========================================================================
+  - title: Packs & 15-Cell Matrix
+    path: packs-cells
+    icon: mdi:view-grid-outline
+    cards:
+      - type: entities
+        title: Status Ringkas Pack #1..#4
+        show_header_toggle: false
+        entities:
+          - entity: binary_sensor.shoto_ils6300_pack1_online
+            name: Pack 1 Online
+          - entity: binary_sensor.shoto_ils6300_pack2_online
+            name: Pack 2 Online
+          - entity: binary_sensor.shoto_ils6300_pack3_online
+            name: Pack 3 Online
+          - entity: binary_sensor.shoto_ils6300_pack4_online
+            name: Pack 4 Online
+
+      - type: history-graph
+        title: Pembagian Arus Pack #1..#4 (Current Sharing 24 Jam)
+        hours_to_show: 24
+        entities:
+          - entity: sensor.shoto_ils6300_pack1_current
+            name: Pack 1 (A)
+          - entity: sensor.shoto_ils6300_pack2_current
+            name: Pack 2 (A)
+          - entity: sensor.shoto_ils6300_pack3_current
+            name: Pack 3 (A)
+          - entity: sensor.shoto_ils6300_pack4_current
+            name: Pack 4 (A)
+
+      - type: history-graph
+        title: Histori Delta V Sel Pack #1..#4 (24 Jam)
+        hours_to_show: 24
+        entities:
+          - entity: sensor.shoto_ils6300_pack1_cell_dv_mv
+            name: Pack 1 dV (mV)
+          - entity: sensor.shoto_ils6300_pack2_cell_dv_mv
+            name: Pack 2 dV (mV)
+          - entity: sensor.shoto_ils6300_pack3_cell_dv_mv
+            name: Pack 3 dV (mV)
+          - entity: sensor.shoto_ils6300_pack4_cell_dv_mv
+            name: Pack 4 dV (mV)
+
+      # --- Pack #1 ---
+      - type: vertical-stack
+        cards:
+          - type: entities
+            title: "Pack #1 - Ringkasan & Diagnostik"
+            show_header_toggle: false
+            entities:
+              - binary_sensor.shoto_ils6300_pack1_online
+              - sensor.shoto_ils6300_pack1_voltage
+              - sensor.shoto_ils6300_pack1_current
+              - sensor.shoto_ils6300_pack1_soc
+              - sensor.shoto_ils6300_pack1_soh
+              - sensor.shoto_ils6300_pack1_rem_cap_ah
+              - sensor.shoto_ils6300_pack1_cycles
+              - sensor.shoto_ils6300_pack1_cell_min_mv
+              - sensor.shoto_ils6300_pack1_cell_max_mv
+              - sensor.shoto_ils6300_pack1_cell_dv_mv
+              - sensor.shoto_ils6300_pack1_prot_flags
+              - sensor.shoto_ils6300_pack1_fault_flags
+              - sensor.shoto_ils6300_pack1_warn_flags
+              - sensor.shoto_ils6300_pack1_miss_cnt
+              - sensor.shoto_ils6300_pack1_age_ms
+
+          - type: markdown
+            title: "Pack #1 - Matriks 15 Sel (Highlight Min/Max)"
+            content: |
+              {% set cmin = states('sensor.shoto_ils6300_pack1_cell_min_mv') | int(0) %}
+              {% set cmax = states('sensor.shoto_ils6300_pack1_cell_max_mv') | int(0) %}
+              {% set vals = [
+                states('sensor.shoto_ils6300_pack1_cell_01') | int(0),
+                states('sensor.shoto_ils6300_pack1_cell_02') | int(0),
+                states('sensor.shoto_ils6300_pack1_cell_03') | int(0),
+                states('sensor.shoto_ils6300_pack1_cell_04') | int(0),
+                states('sensor.shoto_ils6300_pack1_cell_05') | int(0),
+                states('sensor.shoto_ils6300_pack1_cell_06') | int(0),
+                states('sensor.shoto_ils6300_pack1_cell_07') | int(0),
+                states('sensor.shoto_ils6300_pack1_cell_08') | int(0),
+                states('sensor.shoto_ils6300_pack1_cell_09') | int(0),
+                states('sensor.shoto_ils6300_pack1_cell_10') | int(0),
+                states('sensor.shoto_ils6300_pack1_cell_11') | int(0),
+                states('sensor.shoto_ils6300_pack1_cell_12') | int(0),
+                states('sensor.shoto_ils6300_pack1_cell_13') | int(0),
+                states('sensor.shoto_ils6300_pack1_cell_14') | int(0),
+                states('sensor.shoto_ils6300_pack1_cell_15') | int(0)
+              ] %}
+              **Min:** {{ cmin }} mV | **Max:** {{ cmax }} mV | **Delta V:** {{ states('sensor.shoto_ils6300_pack1_cell_dv_mv') }} mV
+              | Sel | mV | Sel | mV | Sel | mV |
+              |---|---:|---|---:|---|---:|
+              {% for r in range(0, 5) -%}
+              {%- set v1 = vals[r] -%}
+              {%- set v2 = vals[r + 5] -%}
+              {%- set v3 = vals[r + 10] -%}
+              | C{{ '%02d' % (r + 1) }} | {{ 'MIN ' if v1 == cmin and cmin > 0 else ('MAX ' if v1 == cmax and cmax > 0 else '') }}{{ v1 }} | C{{ '%02d' % (r + 6) }} | {{ 'MIN ' if v2 == cmin and cmin > 0 else ('MAX ' if v2 == cmax and cmax > 0 else '') }}{{ v2 }} | C{{ '%02d' % (r + 11) }} | {{ 'MIN ' if v3 == cmin and cmin > 0 else ('MAX ' if v3 == cmax and cmax > 0 else '') }}{{ v3 }} |
+              {% endfor %}
+
+          - type: entities
+            title: "Pack #1 - Tegangan 15 Sel (C01..C15)"
+            show_header_toggle: false
+            entities:
+              - sensor.shoto_ils6300_pack1_cell_01
+              - sensor.shoto_ils6300_pack1_cell_02
+              - sensor.shoto_ils6300_pack1_cell_03
+              - sensor.shoto_ils6300_pack1_cell_04
+              - sensor.shoto_ils6300_pack1_cell_05
+              - sensor.shoto_ils6300_pack1_cell_06
+              - sensor.shoto_ils6300_pack1_cell_07
+              - sensor.shoto_ils6300_pack1_cell_08
+              - sensor.shoto_ils6300_pack1_cell_09
+              - sensor.shoto_ils6300_pack1_cell_10
+              - sensor.shoto_ils6300_pack1_cell_11
+              - sensor.shoto_ils6300_pack1_cell_12
+              - sensor.shoto_ils6300_pack1_cell_13
+              - sensor.shoto_ils6300_pack1_cell_14
+              - sensor.shoto_ils6300_pack1_cell_15
+
+          - type: history-graph
+            title: "Pack #1 - Grafik 15 Sel (12 Jam)"
+            hours_to_show: 12
+            entities:
+              - sensor.shoto_ils6300_pack1_cell_01
+              - sensor.shoto_ils6300_pack1_cell_02
+              - sensor.shoto_ils6300_pack1_cell_03
+              - sensor.shoto_ils6300_pack1_cell_04
+              - sensor.shoto_ils6300_pack1_cell_05
+              - sensor.shoto_ils6300_pack1_cell_06
+              - sensor.shoto_ils6300_pack1_cell_07
+              - sensor.shoto_ils6300_pack1_cell_08
+              - sensor.shoto_ils6300_pack1_cell_09
+              - sensor.shoto_ils6300_pack1_cell_10
+              - sensor.shoto_ils6300_pack1_cell_11
+              - sensor.shoto_ils6300_pack1_cell_12
+              - sensor.shoto_ils6300_pack1_cell_13
+              - sensor.shoto_ils6300_pack1_cell_14
+              - sensor.shoto_ils6300_pack1_cell_15
+
+          - type: entities
+            title: "Pack #1 - 5 Sensor Suhu (T1..T5)"
+            show_header_toggle: false
+            entities:
+              - sensor.shoto_ils6300_pack1_temp_1
+              - sensor.shoto_ils6300_pack1_temp_2
+              - sensor.shoto_ils6300_pack1_temp_3
+              - sensor.shoto_ils6300_pack1_temp_4
+              - sensor.shoto_ils6300_pack1_temp_5
+
+      # --- Pack #2 ---
+      - type: vertical-stack
+        cards:
+          - type: entities
+            title: "Pack #2 - Ringkasan & Diagnostik"
+            show_header_toggle: false
+            entities:
+              - binary_sensor.shoto_ils6300_pack2_online
+              - sensor.shoto_ils6300_pack2_voltage
+              - sensor.shoto_ils6300_pack2_current
+              - sensor.shoto_ils6300_pack2_soc
+              - sensor.shoto_ils6300_pack2_soh
+              - sensor.shoto_ils6300_pack2_rem_cap_ah
+              - sensor.shoto_ils6300_pack2_cycles
+              - sensor.shoto_ils6300_pack2_cell_min_mv
+              - sensor.shoto_ils6300_pack2_cell_max_mv
+              - sensor.shoto_ils6300_pack2_cell_dv_mv
+              - sensor.shoto_ils6300_pack2_prot_flags
+              - sensor.shoto_ils6300_pack2_fault_flags
+              - sensor.shoto_ils6300_pack2_warn_flags
+              - sensor.shoto_ils6300_pack2_miss_cnt
+              - sensor.shoto_ils6300_pack2_age_ms
+
+          - type: markdown
+            title: "Pack #2 - Matriks 15 Sel (Highlight Min/Max)"
+            content: |
+              {% set cmin = states('sensor.shoto_ils6300_pack2_cell_min_mv') | int(0) %}
+              {% set cmax = states('sensor.shoto_ils6300_pack2_cell_max_mv') | int(0) %}
+              {% set vals = [
+                states('sensor.shoto_ils6300_pack2_cell_01') | int(0),
+                states('sensor.shoto_ils6300_pack2_cell_02') | int(0),
+                states('sensor.shoto_ils6300_pack2_cell_03') | int(0),
+                states('sensor.shoto_ils6300_pack2_cell_04') | int(0),
+                states('sensor.shoto_ils6300_pack2_cell_05') | int(0),
+                states('sensor.shoto_ils6300_pack2_cell_06') | int(0),
+                states('sensor.shoto_ils6300_pack2_cell_07') | int(0),
+                states('sensor.shoto_ils6300_pack2_cell_08') | int(0),
+                states('sensor.shoto_ils6300_pack2_cell_09') | int(0),
+                states('sensor.shoto_ils6300_pack2_cell_10') | int(0),
+                states('sensor.shoto_ils6300_pack2_cell_11') | int(0),
+                states('sensor.shoto_ils6300_pack2_cell_12') | int(0),
+                states('sensor.shoto_ils6300_pack2_cell_13') | int(0),
+                states('sensor.shoto_ils6300_pack2_cell_14') | int(0),
+                states('sensor.shoto_ils6300_pack2_cell_15') | int(0)
+              ] %}
+              **Min:** {{ cmin }} mV | **Max:** {{ cmax }} mV | **Delta V:** {{ states('sensor.shoto_ils6300_pack2_cell_dv_mv') }} mV
+              | Sel | mV | Sel | mV | Sel | mV |
+              |---|---:|---|---:|---|---:|
+              {% for r in range(0, 5) -%}
+              {%- set v1 = vals[r] -%}
+              {%- set v2 = vals[r + 5] -%}
+              {%- set v3 = vals[r + 10] -%}
+              | C{{ '%02d' % (r + 1) }} | {{ 'MIN ' if v1 == cmin and cmin > 0 else ('MAX ' if v1 == cmax and cmax > 0 else '') }}{{ v1 }} | C{{ '%02d' % (r + 6) }} | {{ 'MIN ' if v2 == cmin and cmin > 0 else ('MAX ' if v2 == cmax and cmax > 0 else '') }}{{ v2 }} | C{{ '%02d' % (r + 11) }} | {{ 'MIN ' if v3 == cmin and cmin > 0 else ('MAX ' if v3 == cmax and cmax > 0 else '') }}{{ v3 }} |
+              {% endfor %}
+
+          - type: entities
+            title: "Pack #2 - Tegangan 15 Sel (C01..C15)"
+            show_header_toggle: false
+            entities:
+              - sensor.shoto_ils6300_pack2_cell_01
+              - sensor.shoto_ils6300_pack2_cell_02
+              - sensor.shoto_ils6300_pack2_cell_03
+              - sensor.shoto_ils6300_pack2_cell_04
+              - sensor.shoto_ils6300_pack2_cell_05
+              - sensor.shoto_ils6300_pack2_cell_06
+              - sensor.shoto_ils6300_pack2_cell_07
+              - sensor.shoto_ils6300_pack2_cell_08
+              - sensor.shoto_ils6300_pack2_cell_09
+              - sensor.shoto_ils6300_pack2_cell_10
+              - sensor.shoto_ils6300_pack2_cell_11
+              - sensor.shoto_ils6300_pack2_cell_12
+              - sensor.shoto_ils6300_pack2_cell_13
+              - sensor.shoto_ils6300_pack2_cell_14
+              - sensor.shoto_ils6300_pack2_cell_15
+
+          - type: history-graph
+            title: "Pack #2 - Grafik 15 Sel (12 Jam)"
+            hours_to_show: 12
+            entities:
+              - sensor.shoto_ils6300_pack2_cell_01
+              - sensor.shoto_ils6300_pack2_cell_02
+              - sensor.shoto_ils6300_pack2_cell_03
+              - sensor.shoto_ils6300_pack2_cell_04
+              - sensor.shoto_ils6300_pack2_cell_05
+              - sensor.shoto_ils6300_pack2_cell_06
+              - sensor.shoto_ils6300_pack2_cell_07
+              - sensor.shoto_ils6300_pack2_cell_08
+              - sensor.shoto_ils6300_pack2_cell_09
+              - sensor.shoto_ils6300_pack2_cell_10
+              - sensor.shoto_ils6300_pack2_cell_11
+              - sensor.shoto_ils6300_pack2_cell_12
+              - sensor.shoto_ils6300_pack2_cell_13
+              - sensor.shoto_ils6300_pack2_cell_14
+              - sensor.shoto_ils6300_pack2_cell_15
+
+          - type: entities
+            title: "Pack #2 - 5 Sensor Suhu (T1..T5)"
+            show_header_toggle: false
+            entities:
+              - sensor.shoto_ils6300_pack2_temp_1
+              - sensor.shoto_ils6300_pack2_temp_2
+              - sensor.shoto_ils6300_pack2_temp_3
+              - sensor.shoto_ils6300_pack2_temp_4
+              - sensor.shoto_ils6300_pack2_temp_5
+
+      # --- Pack #3 (Conditional saat Online) ---
+      - type: conditional
+        conditions:
+          - condition: state
+            entity: binary_sensor.shoto_ils6300_pack3_online
+            state: "on"
+        card:
+          type: vertical-stack
+          cards:
+            - type: entities
+              title: "Pack #3 - Ringkasan & Diagnostik"
+              show_header_toggle: false
+              entities:
+                - binary_sensor.shoto_ils6300_pack3_online
+                - sensor.shoto_ils6300_pack3_voltage
+                - sensor.shoto_ils6300_pack3_current
+                - sensor.shoto_ils6300_pack3_soc
+                - sensor.shoto_ils6300_pack3_soh
+                - sensor.shoto_ils6300_pack3_rem_cap_ah
+                - sensor.shoto_ils6300_pack3_cycles
+                - sensor.shoto_ils6300_pack3_cell_min_mv
+                - sensor.shoto_ils6300_pack3_cell_max_mv
+                - sensor.shoto_ils6300_pack3_cell_dv_mv
+                - sensor.shoto_ils6300_pack3_prot_flags
+                - sensor.shoto_ils6300_pack3_fault_flags
+                - sensor.shoto_ils6300_pack3_warn_flags
+                - sensor.shoto_ils6300_pack3_miss_cnt
+                - sensor.shoto_ils6300_pack3_age_ms
+
+            - type: markdown
+              title: "Pack #3 - Matriks 15 Sel (Highlight Min/Max)"
+              content: |
+                {% set cmin = states('sensor.shoto_ils6300_pack3_cell_min_mv') | int(0) %}
+                {% set cmax = states('sensor.shoto_ils6300_pack3_cell_max_mv') | int(0) %}
+                {% set vals = [
+                  states('sensor.shoto_ils6300_pack3_cell_01') | int(0),
+                  states('sensor.shoto_ils6300_pack3_cell_02') | int(0),
+                  states('sensor.shoto_ils6300_pack3_cell_03') | int(0),
+                  states('sensor.shoto_ils6300_pack3_cell_04') | int(0),
+                  states('sensor.shoto_ils6300_pack3_cell_05') | int(0),
+                  states('sensor.shoto_ils6300_pack3_cell_06') | int(0),
+                  states('sensor.shoto_ils6300_pack3_cell_07') | int(0),
+                  states('sensor.shoto_ils6300_pack3_cell_08') | int(0),
+                  states('sensor.shoto_ils6300_pack3_cell_09') | int(0),
+                  states('sensor.shoto_ils6300_pack3_cell_10') | int(0),
+                  states('sensor.shoto_ils6300_pack3_cell_11') | int(0),
+                  states('sensor.shoto_ils6300_pack3_cell_12') | int(0),
+                  states('sensor.shoto_ils6300_pack3_cell_13') | int(0),
+                  states('sensor.shoto_ils6300_pack3_cell_14') | int(0),
+                  states('sensor.shoto_ils6300_pack3_cell_15') | int(0)
+                ] %}
+                **Min:** {{ cmin }} mV | **Max:** {{ cmax }} mV | **Delta V:** {{ states('sensor.shoto_ils6300_pack3_cell_dv_mv') }} mV
+                | Sel | mV | Sel | mV | Sel | mV |
+                |---|---:|---|---:|---|---:|
+                {% for r in range(0, 5) -%}
+                {%- set v1 = vals[r] -%}
+                {%- set v2 = vals[r + 5] -%}
+                {%- set v3 = vals[r + 10] -%}
+                | C{{ '%02d' % (r + 1) }} | {{ 'MIN ' if v1 == cmin and cmin > 0 else ('MAX ' if v1 == cmax and cmax > 0 else '') }}{{ v1 }} | C{{ '%02d' % (r + 6) }} | {{ 'MIN ' if v2 == cmin and cmin > 0 else ('MAX ' if v2 == cmax and cmax > 0 else '') }}{{ v2 }} | C{{ '%02d' % (r + 11) }} | {{ 'MIN ' if v3 == cmin and cmin > 0 else ('MAX ' if v3 == cmax and cmax > 0 else '') }}{{ v3 }} |
+                {% endfor %}
+
+            - type: entities
+              title: "Pack #3 - Tegangan 15 Sel (C01..C15)"
+              show_header_toggle: false
+              entities:
+                - sensor.shoto_ils6300_pack3_cell_01
+                - sensor.shoto_ils6300_pack3_cell_02
+                - sensor.shoto_ils6300_pack3_cell_03
+                - sensor.shoto_ils6300_pack3_cell_04
+                - sensor.shoto_ils6300_pack3_cell_05
+                - sensor.shoto_ils6300_pack3_cell_06
+                - sensor.shoto_ils6300_pack3_cell_07
+                - sensor.shoto_ils6300_pack3_cell_08
+                - sensor.shoto_ils6300_pack3_cell_09
+                - sensor.shoto_ils6300_pack3_cell_10
+                - sensor.shoto_ils6300_pack3_cell_11
+                - sensor.shoto_ils6300_pack3_cell_12
+                - sensor.shoto_ils6300_pack3_cell_13
+                - sensor.shoto_ils6300_pack3_cell_14
+                - sensor.shoto_ils6300_pack3_cell_15
+
+            - type: history-graph
+              title: "Pack #3 - Grafik 15 Sel (12 Jam)"
+              hours_to_show: 12
+              entities:
+                - sensor.shoto_ils6300_pack3_cell_01
+                - sensor.shoto_ils6300_pack3_cell_02
+                - sensor.shoto_ils6300_pack3_cell_03
+                - sensor.shoto_ils6300_pack3_cell_04
+                - sensor.shoto_ils6300_pack3_cell_05
+                - sensor.shoto_ils6300_pack3_cell_06
+                - sensor.shoto_ils6300_pack3_cell_07
+                - sensor.shoto_ils6300_pack3_cell_08
+                - sensor.shoto_ils6300_pack3_cell_09
+                - sensor.shoto_ils6300_pack3_cell_10
+                - sensor.shoto_ils6300_pack3_cell_11
+                - sensor.shoto_ils6300_pack3_cell_12
+                - sensor.shoto_ils6300_pack3_cell_13
+                - sensor.shoto_ils6300_pack3_cell_14
+                - sensor.shoto_ils6300_pack3_cell_15
+
+            - type: entities
+              title: "Pack #3 - 5 Sensor Suhu (T1..T5)"
+              show_header_toggle: false
+              entities:
+                - sensor.shoto_ils6300_pack3_temp_1
+                - sensor.shoto_ils6300_pack3_temp_2
+                - sensor.shoto_ils6300_pack3_temp_3
+                - sensor.shoto_ils6300_pack3_temp_4
+                - sensor.shoto_ils6300_pack3_temp_5
+
+      # --- Pack #4 (Conditional saat Online) ---
+      - type: conditional
+        conditions:
+          - condition: state
+            entity: binary_sensor.shoto_ils6300_pack4_online
+            state: "on"
+        card:
+          type: vertical-stack
+          cards:
+            - type: entities
+              title: "Pack #4 - Ringkasan & Diagnostik"
+              show_header_toggle: false
+              entities:
+                - binary_sensor.shoto_ils6300_pack4_online
+                - sensor.shoto_ils6300_pack4_voltage
+                - sensor.shoto_ils6300_pack4_current
+                - sensor.shoto_ils6300_pack4_soc
+                - sensor.shoto_ils6300_pack4_soh
+                - sensor.shoto_ils6300_pack4_rem_cap_ah
+                - sensor.shoto_ils6300_pack4_cycles
+                - sensor.shoto_ils6300_pack4_cell_min_mv
+                - sensor.shoto_ils6300_pack4_cell_max_mv
+                - sensor.shoto_ils6300_pack4_cell_dv_mv
+                - sensor.shoto_ils6300_pack4_prot_flags
+                - sensor.shoto_ils6300_pack4_fault_flags
+                - sensor.shoto_ils6300_pack4_warn_flags
+                - sensor.shoto_ils6300_pack4_miss_cnt
+                - sensor.shoto_ils6300_pack4_age_ms
+
+            - type: markdown
+              title: "Pack #4 - Matriks 15 Sel (Highlight Min/Max)"
+              content: |
+                {% set cmin = states('sensor.shoto_ils6300_pack4_cell_min_mv') | int(0) %}
+                {% set cmax = states('sensor.shoto_ils6300_pack4_cell_max_mv') | int(0) %}
+                {% set vals = [
+                  states('sensor.shoto_ils6300_pack4_cell_01') | int(0),
+                  states('sensor.shoto_ils6300_pack4_cell_02') | int(0),
+                  states('sensor.shoto_ils6300_pack4_cell_03') | int(0),
+                  states('sensor.shoto_ils6300_pack4_cell_04') | int(0),
+                  states('sensor.shoto_ils6300_pack4_cell_05') | int(0),
+                  states('sensor.shoto_ils6300_pack4_cell_06') | int(0),
+                  states('sensor.shoto_ils6300_pack4_cell_07') | int(0),
+                  states('sensor.shoto_ils6300_pack4_cell_08') | int(0),
+                  states('sensor.shoto_ils6300_pack4_cell_09') | int(0),
+                  states('sensor.shoto_ils6300_pack4_cell_10') | int(0),
+                  states('sensor.shoto_ils6300_pack4_cell_11') | int(0),
+                  states('sensor.shoto_ils6300_pack4_cell_12') | int(0),
+                  states('sensor.shoto_ils6300_pack4_cell_13') | int(0),
+                  states('sensor.shoto_ils6300_pack4_cell_14') | int(0),
+                  states('sensor.shoto_ils6300_pack4_cell_15') | int(0)
+                ] %}
+                **Min:** {{ cmin }} mV | **Max:** {{ cmax }} mV | **Delta V:** {{ states('sensor.shoto_ils6300_pack4_cell_dv_mv') }} mV
+                | Sel | mV | Sel | mV | Sel | mV |
+                |---|---:|---|---:|---|---:|
+                {% for r in range(0, 5) -%}
+                {%- set v1 = vals[r] -%}
+                {%- set v2 = vals[r + 5] -%}
+                {%- set v3 = vals[r + 10] -%}
+                | C{{ '%02d' % (r + 1) }} | {{ 'MIN ' if v1 == cmin and cmin > 0 else ('MAX ' if v1 == cmax and cmax > 0 else '') }}{{ v1 }} | C{{ '%02d' % (r + 6) }} | {{ 'MIN ' if v2 == cmin and cmin > 0 else ('MAX ' if v2 == cmax and cmax > 0 else '') }}{{ v2 }} | C{{ '%02d' % (r + 11) }} | {{ 'MIN ' if v3 == cmin and cmin > 0 else ('MAX ' if v3 == cmax and cmax > 0 else '') }}{{ v3 }} |
+                {% endfor %}
+
+            - type: entities
+              title: "Pack #4 - Tegangan 15 Sel (C01..C15)"
+              show_header_toggle: false
+              entities:
+                - sensor.shoto_ils6300_pack4_cell_01
+                - sensor.shoto_ils6300_pack4_cell_02
+                - sensor.shoto_ils6300_pack4_cell_03
+                - sensor.shoto_ils6300_pack4_cell_04
+                - sensor.shoto_ils6300_pack4_cell_05
+                - sensor.shoto_ils6300_pack4_cell_06
+                - sensor.shoto_ils6300_pack4_cell_07
+                - sensor.shoto_ils6300_pack4_cell_08
+                - sensor.shoto_ils6300_pack4_cell_09
+                - sensor.shoto_ils6300_pack4_cell_10
+                - sensor.shoto_ils6300_pack4_cell_11
+                - sensor.shoto_ils6300_pack4_cell_12
+                - sensor.shoto_ils6300_pack4_cell_13
+                - sensor.shoto_ils6300_pack4_cell_14
+                - sensor.shoto_ils6300_pack4_cell_15
+
+            - type: history-graph
+              title: "Pack #4 - Grafik 15 Sel (12 Jam)"
+              hours_to_show: 12
+              entities:
+                - sensor.shoto_ils6300_pack4_cell_01
+                - sensor.shoto_ils6300_pack4_cell_02
+                - sensor.shoto_ils6300_pack4_cell_03
+                - sensor.shoto_ils6300_pack4_cell_04
+                - sensor.shoto_ils6300_pack4_cell_05
+                - sensor.shoto_ils6300_pack4_cell_06
+                - sensor.shoto_ils6300_pack4_cell_07
+                - sensor.shoto_ils6300_pack4_cell_08
+                - sensor.shoto_ils6300_pack4_cell_09
+                - sensor.shoto_ils6300_pack4_cell_10
+                - sensor.shoto_ils6300_pack4_cell_11
+                - sensor.shoto_ils6300_pack4_cell_12
+                - sensor.shoto_ils6300_pack4_cell_13
+                - sensor.shoto_ils6300_pack4_cell_14
+                - sensor.shoto_ils6300_pack4_cell_15
+
+            - type: entities
+              title: "Pack #4 - 5 Sensor Suhu (T1..T5)"
+              show_header_toggle: false
+              entities:
+                - sensor.shoto_ils6300_pack4_temp_1
+                - sensor.shoto_ils6300_pack4_temp_2
+                - sensor.shoto_ils6300_pack4_temp_3
+                - sensor.shoto_ils6300_pack4_temp_4
+                - sensor.shoto_ils6300_pack4_temp_5
+
+  # ===========================================================================
+  # VIEW 3: Shoto EEPROM Audit (Read-Only)
+  # ===========================================================================
+  - title: Shoto EEPROM Audit (Read-Only)
+    path: eeprom-audit
+    icon: mdi:memory
+    cards:
+      - type: markdown
+        title: Audit Parameter EEPROM Shoto BMS (100% Read-Only)
+        content: |
+          Menampilkan **13 register proteksi** (`cmd 0x06..0x50`) dan **43 tag alarm** (`cmd 0x43`, tag `0x00..0x2A`) yang dibaca secara **read-only** dari protokol TianBangda `0x7C`/`0x7E` (tidak pernah mengirim perintah tulis `0xAA`).
+
+      - type: entities
+        title: Kontrol Audit EEPROM & Status Validitas
+        show_header_toggle: false
+        entities:
+          - entity: button.shoto_ils6300_btn_audit_eeprom_all
+            name: Audit EEPROM (Semua Pack)
+          - entity: button.shoto_ils6300_pack1_btn_audit_eeprom
+            name: Audit EEPROM Pack #1
+          - entity: button.shoto_ils6300_pack2_btn_audit_eeprom
+            name: Audit EEPROM Pack #2
+          - entity: button.shoto_ils6300_pack3_btn_audit_eeprom
+            name: Audit EEPROM Pack #3
+          - entity: button.shoto_ils6300_pack4_btn_audit_eeprom
+            name: Audit EEPROM Pack #4
+          - entity: binary_sensor.shoto_ils6300_pack1_eep_valid
+            name: Pack #1 EEPROM Valid
+          - entity: binary_sensor.shoto_ils6300_pack2_eep_valid
+            name: Pack #2 EEPROM Valid
+          - entity: binary_sensor.shoto_ils6300_pack3_eep_valid
+            name: Pack #3 EEPROM Valid
+          - entity: binary_sensor.shoto_ils6300_pack4_eep_valid
+            name: Pack #4 EEPROM Valid
+
+      # --- Pack #1 EEPROM ---
+      - type: markdown
+        title: "Pack #1 - EEPROM Audit (13 Proteksi + 43 Alarm)"
+        content: |
+          **Addr:** {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'addr') }} | **Valid:** {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'valid') }} | **Audit Uptime:** {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'aud_ms') }} ms | **Prot OK:** {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'p_ok') }} | **Alarm OK:** {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_ok') }} ({{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'tags') }} tags)
+
+          ### 13 Parameter Proteksi (cmd 0x06..0x50)
+          | Cmd | Parameter | Nilai |
+          |---|---|---:|
+          | `0x06` | Cell OV Protection | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'p_cov') }} mV |
+          | `0x07` | Cell OV Recovery | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'p_covr') }} mV |
+          | `0x09` | Cell UV Protection | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'p_cuv') }} mV |
+          | `0x0A` | Cell UV Recovery | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'p_cuvr') }} mV |
+          | `0x2A` | Pack OV Protection | {{ ((state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'p_pov') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'p_pov') }} cV) |
+          | `0x2B` | Pack OV Recovery | {{ ((state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'p_povr') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'p_povr') }} cV) |
+          | `0x2E` | Pack UV Protection | {{ ((state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'p_puv') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'p_puv') }} cV) |
+          | `0x2F` | Pack UV Recovery | {{ ((state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'p_puvr') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'p_puvr') }} cV) |
+          | `0x35` | Const Charge Voltage | {{ ((state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'p_ccv') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'p_ccv') }} cV) |
+          | `0x2D` | Const Charge Current | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'p_cci') }} (0.01A/raw) |
+          | `0x32` | Cell Sleep Voltage | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'p_slpv') }} mV |
+          | `0x3E` | UV Off Interval | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'p_uvo') }} |
+          | `0x50` | Sleep Time | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'p_slpt') }} min |
+
+          ### 43 Parameter Alarm (cmd 0x43, tag 0x00..0x2A)
+          | Alarm | Trigger | Delay | Recovery |
+          |---|---:|---:|---:|
+          | Cell OV | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_cov') }} mV | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_covd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_covr') }} mV |
+          | Cell UV | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_cuv') }} mV | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_cuvd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_cuvr') }} mV |
+          | Pack OV | {{ ((state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_pov') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_pov') }} cV) | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_povd') }} ms | {{ ((state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_povr') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_povr') }} cV) |
+          | Pack UV | {{ ((state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_puv') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_puv') }} cV) | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_puvd') }} ms | {{ ((state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_puvr') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_puvr') }} cV) |
+          | Charge OC | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_coc') }} cA | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_cocd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_cocr') }} cA |
+          | Discharge OC | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_doc') }} cA | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_docd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_docr') }} cA |
+          | Charge OT | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_cot') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_cotd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_cotr') }} C |
+          | Charge UT | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_cut') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_cutd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_cutr') }} C |
+          | Discharge OT | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_dot') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_dotd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_dotr') }} C |
+          | Discharge UT | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_dut') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_dutd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_dutr') }} C |
+          | MOSFET OT | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_mot') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_motd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_motr') }} C |
+          | Low SOC | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_lsoc') }} % | - | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_lsocr') }} % |
+          | Cell Diff (dV) | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_cdv') }} mV | - | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_cdvr') }} mV |
+          | Env OT | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_eot') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_eotd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_eotr') }} C |
+          | Env UT | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_eut') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_eutd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack1_eep_valid', 'a_eutr') }} C |
+
+      # --- Pack #2 EEPROM ---
+      - type: markdown
+        title: "Pack #2 - EEPROM Audit (13 Proteksi + 43 Alarm)"
+        content: |
+          **Addr:** {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'addr') }} | **Valid:** {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'valid') }} | **Audit Uptime:** {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'aud_ms') }} ms | **Prot OK:** {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'p_ok') }} | **Alarm OK:** {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_ok') }} ({{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'tags') }} tags)
+
+          ### 13 Parameter Proteksi (cmd 0x06..0x50)
+          | Cmd | Parameter | Nilai |
+          |---|---|---:|
+          | `0x06` | Cell OV Protection | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'p_cov') }} mV |
+          | `0x07` | Cell OV Recovery | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'p_covr') }} mV |
+          | `0x09` | Cell UV Protection | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'p_cuv') }} mV |
+          | `0x0A` | Cell UV Recovery | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'p_cuvr') }} mV |
+          | `0x2A` | Pack OV Protection | {{ ((state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'p_pov') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'p_pov') }} cV) |
+          | `0x2B` | Pack OV Recovery | {{ ((state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'p_povr') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'p_povr') }} cV) |
+          | `0x2E` | Pack UV Protection | {{ ((state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'p_puv') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'p_puv') }} cV) |
+          | `0x2F` | Pack UV Recovery | {{ ((state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'p_puvr') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'p_puvr') }} cV) |
+          | `0x35` | Const Charge Voltage | {{ ((state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'p_ccv') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'p_ccv') }} cV) |
+          | `0x2D` | Const Charge Current | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'p_cci') }} (0.01A/raw) |
+          | `0x32` | Cell Sleep Voltage | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'p_slpv') }} mV |
+          | `0x3E` | UV Off Interval | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'p_uvo') }} |
+          | `0x50` | Sleep Time | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'p_slpt') }} min |
+
+          ### 43 Parameter Alarm (cmd 0x43, tag 0x00..0x2A)
+          | Alarm | Trigger | Delay | Recovery |
+          |---|---:|---:|---:|
+          | Cell OV | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_cov') }} mV | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_covd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_covr') }} mV |
+          | Cell UV | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_cuv') }} mV | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_cuvd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_cuvr') }} mV |
+          | Pack OV | {{ ((state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_pov') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_pov') }} cV) | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_povd') }} ms | {{ ((state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_povr') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_povr') }} cV) |
+          | Pack UV | {{ ((state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_puv') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_puv') }} cV) | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_puvd') }} ms | {{ ((state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_puvr') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_puvr') }} cV) |
+          | Charge OC | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_coc') }} cA | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_cocd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_cocr') }} cA |
+          | Discharge OC | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_doc') }} cA | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_docd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_docr') }} cA |
+          | Charge OT | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_cot') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_cotd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_cotr') }} C |
+          | Charge UT | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_cut') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_cutd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_cutr') }} C |
+          | Discharge OT | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_dot') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_dotd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_dotr') }} C |
+          | Discharge UT | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_dut') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_dutd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_dutr') }} C |
+          | MOSFET OT | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_mot') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_motd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_motr') }} C |
+          | Low SOC | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_lsoc') }} % | - | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_lsocr') }} % |
+          | Cell Diff (dV) | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_cdv') }} mV | - | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_cdvr') }} mV |
+          | Env OT | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_eot') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_eotd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_eotr') }} C |
+          | Env UT | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_eut') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_eutd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack2_eep_valid', 'a_eutr') }} C |
+
+      # --- Pack #3 EEPROM ---
+      - type: markdown
+        title: "Pack #3 - EEPROM Audit (13 Proteksi + 43 Alarm)"
+        content: |
+          **Addr:** {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'addr') }} | **Valid:** {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'valid') }} | **Audit Uptime:** {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'aud_ms') }} ms | **Prot OK:** {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'p_ok') }} | **Alarm OK:** {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_ok') }} ({{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'tags') }} tags)
+
+          ### 13 Parameter Proteksi (cmd 0x06..0x50)
+          | Cmd | Parameter | Nilai |
+          |---|---|---:|
+          | `0x06` | Cell OV Protection | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'p_cov') }} mV |
+          | `0x07` | Cell OV Recovery | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'p_covr') }} mV |
+          | `0x09` | Cell UV Protection | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'p_cuv') }} mV |
+          | `0x0A` | Cell UV Recovery | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'p_cuvr') }} mV |
+          | `0x2A` | Pack OV Protection | {{ ((state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'p_pov') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'p_pov') }} cV) |
+          | `0x2B` | Pack OV Recovery | {{ ((state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'p_povr') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'p_povr') }} cV) |
+          | `0x2E` | Pack UV Protection | {{ ((state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'p_puv') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'p_puv') }} cV) |
+          | `0x2F` | Pack UV Recovery | {{ ((state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'p_puvr') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'p_puvr') }} cV) |
+          | `0x35` | Const Charge Voltage | {{ ((state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'p_ccv') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'p_ccv') }} cV) |
+          | `0x2D` | Const Charge Current | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'p_cci') }} (0.01A/raw) |
+          | `0x32` | Cell Sleep Voltage | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'p_slpv') }} mV |
+          | `0x3E` | UV Off Interval | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'p_uvo') }} |
+          | `0x50` | Sleep Time | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'p_slpt') }} min |
+
+          ### 43 Parameter Alarm (cmd 0x43, tag 0x00..0x2A)
+          | Alarm | Trigger | Delay | Recovery |
+          |---|---:|---:|---:|
+          | Cell OV | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_cov') }} mV | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_covd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_covr') }} mV |
+          | Cell UV | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_cuv') }} mV | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_cuvd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_cuvr') }} mV |
+          | Pack OV | {{ ((state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_pov') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_pov') }} cV) | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_povd') }} ms | {{ ((state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_povr') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_povr') }} cV) |
+          | Pack UV | {{ ((state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_puv') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_puv') }} cV) | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_puvd') }} ms | {{ ((state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_puvr') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_puvr') }} cV) |
+          | Charge OC | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_coc') }} cA | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_cocd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_cocr') }} cA |
+          | Discharge OC | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_doc') }} cA | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_docd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_docr') }} cA |
+          | Charge OT | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_cot') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_cotd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_cotr') }} C |
+          | Charge UT | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_cut') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_cutd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_cutr') }} C |
+          | Discharge OT | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_dot') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_dotd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_dotr') }} C |
+          | Discharge UT | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_dut') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_dutd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_dutr') }} C |
+          | MOSFET OT | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_mot') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_motd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_motr') }} C |
+          | Low SOC | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_lsoc') }} % | - | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_lsocr') }} % |
+          | Cell Diff (dV) | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_cdv') }} mV | - | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_cdvr') }} mV |
+          | Env OT | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_eot') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_eotd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_eotr') }} C |
+          | Env UT | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_eut') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_eutd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack3_eep_valid', 'a_eutr') }} C |
+
+      # --- Pack #4 EEPROM ---
+      - type: markdown
+        title: "Pack #4 - EEPROM Audit (13 Proteksi + 43 Alarm)"
+        content: |
+          **Addr:** {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'addr') }} | **Valid:** {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'valid') }} | **Audit Uptime:** {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'aud_ms') }} ms | **Prot OK:** {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'p_ok') }} | **Alarm OK:** {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_ok') }} ({{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'tags') }} tags)
+
+          ### 13 Parameter Proteksi (cmd 0x06..0x50)
+          | Cmd | Parameter | Nilai |
+          |---|---|---:|
+          | `0x06` | Cell OV Protection | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'p_cov') }} mV |
+          | `0x07` | Cell OV Recovery | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'p_covr') }} mV |
+          | `0x09` | Cell UV Protection | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'p_cuv') }} mV |
+          | `0x0A` | Cell UV Recovery | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'p_cuvr') }} mV |
+          | `0x2A` | Pack OV Protection | {{ ((state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'p_pov') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'p_pov') }} cV) |
+          | `0x2B` | Pack OV Recovery | {{ ((state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'p_povr') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'p_povr') }} cV) |
+          | `0x2E` | Pack UV Protection | {{ ((state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'p_puv') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'p_puv') }} cV) |
+          | `0x2F` | Pack UV Recovery | {{ ((state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'p_puvr') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'p_puvr') }} cV) |
+          | `0x35` | Const Charge Voltage | {{ ((state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'p_ccv') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'p_ccv') }} cV) |
+          | `0x2D` | Const Charge Current | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'p_cci') }} (0.01A/raw) |
+          | `0x32` | Cell Sleep Voltage | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'p_slpv') }} mV |
+          | `0x3E` | UV Off Interval | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'p_uvo') }} |
+          | `0x50` | Sleep Time | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'p_slpt') }} min |
+
+          ### 43 Parameter Alarm (cmd 0x43, tag 0x00..0x2A)
+          | Alarm | Trigger | Delay | Recovery |
+          |---|---:|---:|---:|
+          | Cell OV | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_cov') }} mV | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_covd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_covr') }} mV |
+          | Cell UV | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_cuv') }} mV | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_cuvd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_cuvr') }} mV |
+          | Pack OV | {{ ((state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_pov') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_pov') }} cV) | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_povd') }} ms | {{ ((state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_povr') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_povr') }} cV) |
+          | Pack UV | {{ ((state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_puv') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_puv') }} cV) | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_puvd') }} ms | {{ ((state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_puvr') | float(0)) / 100) | round(2) }} V ({{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_puvr') }} cV) |
+          | Charge OC | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_coc') }} cA | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_cocd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_cocr') }} cA |
+          | Discharge OC | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_doc') }} cA | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_docd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_docr') }} cA |
+          | Charge OT | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_cot') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_cotd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_cotr') }} C |
+          | Charge UT | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_cut') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_cutd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_cutr') }} C |
+          | Discharge OT | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_dot') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_dotd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_dotr') }} C |
+          | Discharge UT | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_dut') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_dutd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_dutr') }} C |
+          | MOSFET OT | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_mot') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_motd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_motr') }} C |
+          | Low SOC | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_lsoc') }} % | - | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_lsocr') }} % |
+          | Cell Diff (dV) | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_cdv') }} mV | - | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_cdvr') }} mV |
+          | Env OT | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_eot') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_eotd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_eotr') }} C |
+          | Env UT | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_eut') }} C | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_eutd') }} ms | {{ state_attr('binary_sensor.shoto_ils6300_pack4_eep_valid', 'a_eutr') }} C |
+
+  # ===========================================================================
+  # VIEW 4: Action Center & Diagnostics
+  # ===========================================================================
+  - title: Action Center & Diagnostics
+    path: action-diagnostics
+    icon: mdi:wrench-cog
+    cards:
+      - type: vertical-stack
+        cards:
+          - type: entities
+            title: Kunci Pengaman 2 Langkah (Maintenance Unlock)
+            show_header_toggle: false
+            entities:
+              - entity: switch.shoto_ils6300_sw_maint_unlock
+                name: Maintenance Unlock (Auto-Lock 300s)
+              - entity: sensor.shoto_ils6300_maint_unlock_rem_s
+                name: Sisa Waktu Unlock (detik)
+
+          - type: conditional
+            conditions:
+              - condition: state
+                entity: switch.shoto_ils6300_sw_maint_unlock
+                state: "on"
+            card:
+              type: markdown
+              content: |
+                > **MAINTENANCE UNLOCK AKTIF** ({{ states('sensor.shoto_ils6300_maint_unlock_rem_s') }} detik tersisa). Kontrol kritis kini terbuka dan akan terkunci otomatis saat timer habis.
+
+      - type: entities
+        title: Aksi Diagnostik Aman (Tanpa Perlu Unlock)
+        show_header_toggle: false
+        entities:
+          - entity: button.shoto_ils6300_btn_rescan
+            name: Rescan Packs RS485
+          - entity: button.shoto_ils6300_btn_audit_eeprom_all
+            name: Audit EEPROM (Semua Pack)
+          - entity: button.shoto_ils6300_pack1_btn_audit_eeprom
+            name: Audit EEPROM Pack #1
+          - entity: button.shoto_ils6300_pack2_btn_audit_eeprom
+            name: Audit EEPROM Pack #2
+          - entity: button.shoto_ils6300_pack3_btn_audit_eeprom
+            name: Audit EEPROM Pack #3
+          - entity: button.shoto_ils6300_pack4_btn_audit_eeprom
+            name: Audit EEPROM Pack #4
+          - entity: button.shoto_ils6300_btn_reset_diag
+            name: Reset Counter Diagnostik
+          - entity: button.shoto_ils6300_btn_republish_discovery
+            name: Re-Publish MQTT Discovery
+          - entity: switch.shoto_ils6300_sw_cell_log
+            name: Auto Cell Log Serial
+
+      - type: entities
+        title: "Kontrol Kritis [Wajib Maintenance Unlock]"
+        show_header_toggle: false
+        entities:
+          - entity: select.shoto_ils6300_sel_bridge_mode
+            name: "Mode Bridge Inverter [Wajib Maintenance Unlock]"
+          - entity: switch.shoto_ils6300_sw_dyn_discovery
+            name: "Dynamic Pack Discovery [Wajib Maintenance Unlock]"
+          - entity: number.shoto_ils6300_num_policy_cvl
+            name: "Policy CVL Max (51.0-54.4 V) [Wajib Maintenance Unlock]"
+          - entity: number.shoto_ils6300_num_policy_dvl
+            name: "Policy DVL Min (44.0-48.0 V) [Wajib Maintenance Unlock]"
+          - entity: number.shoto_ils6300_num_policy_ccl
+            name: "Policy CCL Cap (10-90 A) [Wajib Maintenance Unlock]"
+          - entity: number.shoto_ils6300_num_policy_dcl
+            name: "Policy DCL Cap (10-120 A) [Wajib Maintenance Unlock]"
+          - entity: number.shoto_ils6300_num_policy_max_dv
+            name: "Policy Max Delta V (0.5-1.5 V) [Wajib Maintenance Unlock]"
+          - entity: button.shoto_ils6300_btn_policy_reset
+            name: "Reset Policy Aman 24/7 [Wajib Maintenance Unlock]"
+          - entity: button.shoto_ils6300_btn_restart
+            name: "Restart ESP32 Bridge [Wajib Maintenance Unlock]"
+
+      - type: entities
+        title: Counter Inverter (60H/61H/62H/63H) & Frame TX Terakhir
+        show_header_toggle: false
+        entities:
+          - entity: sensor.shoto_ils6300_diag_proto
+            name: Protokol Aktif
+          - entity: sensor.shoto_ils6300_diag_inv_mode
+            name: Mode Inverter
+          - entity: sensor.shoto_ils6300_diag_bat_ok
+            name: Battery Poll OK
+          - entity: sensor.shoto_ils6300_diag_bat_err
+            name: Battery Poll Errors
+          - entity: sensor.shoto_ils6300_diag_inv_rx
+            name: Inverter RX Count
+          - entity: sensor.shoto_ils6300_diag_inv_tx
+            name: Inverter TX Count
+          - entity: sensor.shoto_ils6300_diag_inv_60
+            name: Inverter 60H Count
+          - entity: sensor.shoto_ils6300_diag_inv_61
+            name: Inverter 61H Count
+          - entity: sensor.shoto_ils6300_diag_inv_62
+            name: Inverter 62H Count
+          - entity: sensor.shoto_ils6300_diag_inv_63
+            name: Inverter 63H Count
+          - entity: sensor.shoto_ils6300_diag_inv_mtx_miss
+            name: Inverter Mutex Miss
+          - entity: sensor.shoto_ils6300_diag_inhibit_count
+            name: Inhibit Count
+          - entity: sensor.shoto_ils6300_diag_peak_dv
+            name: Peak Pack Delta V
+          - entity: sensor.shoto_ils6300_diag_peak_age_ms
+            name: Peak Poll Age
+          - entity: sensor.shoto_ils6300_diag_tx61
+            name: Last TX 61H Frame
+          - entity: sensor.shoto_ils6300_diag_tx62
+            name: Last TX 62H Frame
+          - entity: sensor.shoto_ils6300_diag_tx63
+            name: Last TX 63H Frame
+
+      - type: entities
+        title: Kesehatan ESP32
+        show_header_toggle: false
+        entities:
+          - entity: sensor.shoto_ils6300_sys_wifi_rssi
+            name: Wi-Fi RSSI
+          - entity: sensor.shoto_ils6300_sys_free_heap
+            name: Free Heap
+          - entity: sensor.shoto_ils6300_sys_uptime_s
+            name: Uptime
+          - entity: sensor.shoto_ils6300_sys_ip
+            name: Alamat IP ESP32

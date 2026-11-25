@@ -13,6 +13,32 @@ except ImportError:
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HA_DIR = REPO_ROOT / "homeassistant"
+CODEC_HPP = REPO_ROOT / "firmware" / "shoto_samoto_bridge" / "ha_mqtt_codec.hpp"
+CONFIG_H = REPO_ROOT / "firmware" / "shoto_samoto_bridge" / "config.h"
+
+BUILTIN_LOVELACE_CARDS = {
+    "gauge",
+    "entities",
+    "entity",
+    "history-graph",
+    "markdown",
+    "conditional",
+    "horizontal-stack",
+    "vertical-stack",
+    "grid",
+    "button",
+    "tile",
+    "statistics-graph",
+}
+
+HA_DISC_TYPE_TO_DOMAIN = {
+    "HA_DISC_SENSOR": "sensor",
+    "HA_DISC_BINARY_SENSOR": "binary_sensor",
+    "HA_DISC_BUTTON": "button",
+    "HA_DISC_SWITCH": "switch",
+    "HA_DISC_SELECT": "select",
+    "HA_DISC_NUMBER": "number",
+}
 
 
 def load_yaml_file(path: Path) -> dict:
@@ -199,6 +225,216 @@ class TestHomeAssistantArtifacts(unittest.TestCase):
         # Ensure placeholder values are used, not real credentials/tokens.
         for forbidden in ("ghp_", "glpat-", "BEGIN PRIVATE KEY", "BEGIN RSA PRIVATE KEY"):
             self.assertNotIn(forbidden, raw)
+
+
+def parse_ha_device_id() -> str:
+    text = CONFIG_H.read_text(encoding="utf-8")
+    m = re.search(r'#define\s+HA_DEVICE_ID\s+"([^"]+)"', text)
+    if not m:
+        raise AssertionError("HA_DEVICE_ID not found in config.h")
+    return m.group(1)
+
+
+def parse_discovery_entities(dev_id: str, max_packs: int = 4) -> set[str]:
+    text = CODEC_HPP.read_text(encoding="utf-8")
+
+    def _extract_array_body(arr_name: str) -> str:
+        m = re.search(
+            rf"static\s+const\s+HaDiscoveryDesc\s+{arr_name}\[\]\s*=\s*\{{(.*?)\n\}};",
+            text,
+            re.DOTALL,
+        )
+        if not m:
+            raise AssertionError(f"Could not locate {arr_name}[] in ha_mqtt_codec.hpp")
+        return m.group(1)
+
+    entry_re = re.compile(
+        r'\{\s*(HA_DISC_[A-Z_]+)\s*,\s*"([a-z0-9_]+)"\s*,',
+        re.MULTILINE,
+    )
+
+    entities: set[str] = set()
+    for disc_type, obj_id in entry_re.findall(_extract_array_body("kGlobalDiscovery")):
+        domain = HA_DISC_TYPE_TO_DOMAIN[disc_type]
+        entities.add(f"{domain}.{dev_id}_{obj_id}")
+
+    pack_static = entry_re.findall(_extract_array_body("kPackStaticDesc"))
+    for slot in range(1, max_packs + 1):
+        for disc_type, obj_id in pack_static:
+            domain = HA_DISC_TYPE_TO_DOMAIN[disc_type]
+            entities.add(f"{domain}.{dev_id}_pack{slot}_{obj_id}")
+        for t in range(1, 6):
+            entities.add(f"sensor.{dev_id}_pack{slot}_temp_{t}")
+        for c in range(1, 16):
+            entities.add(f"sensor.{dev_id}_pack{slot}_cell_{c:02d}")
+    return entities
+
+
+def parse_eeprom_json_keys() -> set[str]:
+    text = CODEC_HPP.read_text(encoding="utf-8")
+    m = re.search(
+        r"inline\s+size_t\s+build_pack_eeprom_json\s*\([^)]*\)\s*\{(.*?)\n\}",
+        text,
+        re.DOTALL,
+    )
+    if not m:
+        raise AssertionError("Could not locate build_pack_eeprom_json() in ha_mqtt_codec.hpp")
+    body = m.group(1)
+    return set(re.findall(r'w\.kv_[a-z0-9]+\(\s*"([a-z0-9_]+)"', body))
+
+
+def walk_lovelace_nodes(node, card_types: list[str], strings: list[str]) -> None:
+    if isinstance(node, dict):
+        if "type" in node and isinstance(node["type"], str):
+            card_types.append(node["type"])
+        for k, v in node.items():
+            if k == "type":
+                continue
+            walk_lovelace_nodes(v, card_types, strings)
+    elif isinstance(node, list):
+        for item in node:
+            walk_lovelace_nodes(item, card_types, strings)
+    elif isinstance(node, str):
+        strings.append(node)
+
+
+class TestShotoLovelaceDashboard(unittest.TestCase):
+    DASHBOARD_PATH = HA_DIR / "dashboards" / "shoto_bms_dashboard.yaml"
+
+    def test_dashboard_yaml_structure_and_builtin_cards(self):
+        self.assertTrue(
+            self.DASHBOARD_PATH.is_file(),
+            f"Missing dashboard YAML: {self.DASHBOARD_PATH}",
+        )
+        dash = load_yaml_file(self.DASHBOARD_PATH)
+        views = dash.get("views")
+        self.assertIsInstance(views, list)
+        self.assertEqual(len(views), 4, "Dashboard must have exactly 4 views")
+
+        expected_titles = [
+            "Overview & Power Flow",
+            "Packs & 15-Cell Matrix",
+            "Shoto EEPROM Audit (Read-Only)",
+            "Action Center & Diagnostics",
+        ]
+        self.assertEqual([v.get("title") for v in views], expected_titles)
+
+        card_types: list[str] = []
+        strings: list[str] = []
+        for view in views:
+            self.assertIsInstance(view, dict)
+            self.assertTrue(view.get("path"))
+            self.assertTrue(view.get("cards"))
+            walk_lovelace_nodes(view["cards"], card_types, strings)
+
+        self.assertGreater(len(card_types), 0)
+        for ctype in card_types:
+            self.assertFalse(
+                ctype.startswith("custom:"),
+                f"HACS/custom card forbidden: {ctype}",
+            )
+            self.assertIn(
+                ctype,
+                BUILTIN_LOVELACE_CARDS,
+                f"Non-builtin Lovelace card type used: {ctype}",
+            )
+
+    def test_dashboard_entities_match_firmware_discovery_exact(self):
+        dev_id = parse_ha_device_id()
+        self.assertEqual(dev_id, "shoto_ils6300")
+        expected_entities = parse_discovery_entities(dev_id, max_packs=4)
+        # 64 global + 4 * (17 static + 5 temps + 15 cells = 37) = 212
+        self.assertEqual(len(expected_entities), 212)
+
+        dash = load_yaml_file(self.DASHBOARD_PATH)
+        card_types: list[str] = []
+        strings: list[str] = []
+        walk_lovelace_nodes(dash["views"], card_types, strings)
+
+        entity_re = re.compile(
+            r"\b(?:sensor|binary_sensor|button|switch|select|number)\.[a-z0-9_]+\b"
+        )
+        referenced_entities: set[str] = set()
+        for s in strings:
+            referenced_entities.update(entity_re.findall(s))
+
+        unknown = sorted(referenced_entities - expected_entities)
+        self.assertEqual(
+            unknown,
+            [],
+            f"Dashboard references unknown/orphan entities not in ha_mqtt_codec.hpp: {unknown}",
+        )
+
+        # Verify all 60 cell entities (Pack 1..4 x Cell 01..15) are shown
+        for slot in range(1, 5):
+            for cell in range(1, 16):
+                eid = f"sensor.{dev_id}_pack{slot}_cell_{cell:02d}"
+                self.assertIn(eid, referenced_entities, f"Missing cell entity in dashboard: {eid}")
+            for temp in range(1, 6):
+                eid = f"sensor.{dev_id}_pack{slot}_temp_{temp}"
+                self.assertIn(eid, referenced_entities, f"Missing temp entity in dashboard: {eid}")
+            self.assertIn(f"binary_sensor.{dev_id}_pack{slot}_eep_valid", referenced_entities)
+
+        # Verify key global & guarded controls are present
+        required_global = [
+            f"sensor.{dev_id}_bank_soc",
+            f"sensor.{dev_id}_bank_voltage",
+            f"sensor.{dev_id}_bank_current",
+            f"sensor.{dev_id}_bank_power",
+            f"binary_sensor.{dev_id}_bank_valid",
+            f"sensor.{dev_id}_diag_inv_mode",
+            f"switch.{dev_id}_sw_maint_unlock",
+            f"sensor.{dev_id}_maint_unlock_rem_s",
+            f"select.{dev_id}_sel_bridge_mode",
+            f"switch.{dev_id}_sw_dyn_discovery",
+            f"number.{dev_id}_num_policy_cvl",
+            f"number.{dev_id}_num_policy_dvl",
+            f"number.{dev_id}_num_policy_ccl",
+            f"number.{dev_id}_num_policy_dcl",
+            f"number.{dev_id}_num_policy_max_dv",
+            f"button.{dev_id}_btn_policy_reset",
+            f"button.{dev_id}_btn_restart",
+        ]
+        for eid in required_global:
+            self.assertIn(eid, referenced_entities, f"Missing required entity in dashboard: {eid}")
+
+    def test_dashboard_view3_eeprom_attributes_match_codec(self):
+        eeprom_keys = parse_eeprom_json_keys()
+        prot_keys = {k for k in eeprom_keys if k.startswith("p_") and k != "p_ok"}
+        alarm_keys = {k for k in eeprom_keys if k.startswith("a_") and k != "a_ok"}
+        self.assertEqual(len(prot_keys), 13)
+        self.assertEqual(len(alarm_keys), 43)
+
+        dash = load_yaml_file(self.DASHBOARD_PATH)
+        view3 = dash["views"][2]
+        card_types: list[str] = []
+        strings: list[str] = []
+        walk_lovelace_nodes(view3, card_types, strings)
+        joined = "\n".join(strings)
+
+        attr_re = re.compile(
+            r"state_attr\(\s*['\"](binary_sensor\.shoto_ils6300_pack([1-4])_eep_valid)['\"]\s*,\s*['\"]([a-z0-9_]+)['\"]\s*\)"
+        )
+        matches = attr_re.findall(joined)
+        self.assertGreater(len(matches), 0, "View 3 must render state_attr() for pack*_eep_valid")
+
+        by_pack: dict[str, set[str]] = {"1": set(), "2": set(), "3": set(), "4": set()}
+        for _eid, pack_num, attr_key in matches:
+            self.assertIn(
+                attr_key,
+                eeprom_keys,
+                f"View 3 references unknown EEPROM attribute '{attr_key}'",
+            )
+            by_pack[pack_num].add(attr_key)
+
+        required_all = prot_keys | alarm_keys
+        for pack_num in ("1", "2", "3", "4"):
+            missing = sorted(required_all - by_pack[pack_num])
+            self.assertEqual(
+                missing,
+                [],
+                f"Pack {pack_num} in View 3 missing EEPROM attributes: {missing}",
+            )
 
 
 if __name__ == "__main__":
