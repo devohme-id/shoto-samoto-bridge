@@ -14,6 +14,7 @@
 #include <HardwareSerial.h>
 #include <esp_idf_version.h>
 #include <esp_task_wdt.h>
+#include <atomic>
 #include "config.h"
 
 #if ENABLE_HA_MQTT
@@ -47,6 +48,24 @@ static constexpr uint8_t MAX_PACKS = MAX_SUPPORTED_PACKS;
 static_assert(
     POLICY_FRESHNESS_MS >= (PACK_OFFLINE_MISSES > 1 ? (PACK_OFFLINE_MISSES - 1) : 1) * (POLL_INTERVAL_MS + 2500UL),
     "POLICY_FRESHNESS_MS terlalu mepet untuk hot-unplug bebas glitch");
+static inline uint32_t age_since_ms(uint32_t now_ms, uint32_t ts_ms) {
+    if (ts_ms == 0u) return 0u;
+    int32_t diff = static_cast<int32_t>(now_ms - ts_ms);
+    return (diff >= 0) ? static_cast<uint32_t>(diff) : 0u;
+}
+
+static inline RuntimePolicyOverride configured_default_runtime_policy() {
+    RuntimePolicyOverride p = default_runtime_policy();
+    p.cvl_v = POLICY_CVL_MAX_V;
+    p.dvl_v = POLICY_DVL_MIN_V;
+    p.ccl_max_a = POLICY_CCL_BANK_MAX_A;
+    p.dcl_max_a = POLICY_DCL_BANK_MAX_A;
+    p.max_delta_v = POLICY_MAX_DELTA_V;
+    p.modified = false;
+    clamp_runtime_policy(p);
+    return p;
+}
+
 static SemaphoreHandle_t g_snap_mutex = nullptr;
 static PackState g_packs[MAX_PACKS];
 static PackEepromSnapshot g_pack_eeprom[MAX_PACKS];
@@ -59,16 +78,16 @@ static bool g_dynamic_discovery = DYNAMIC_PACK_DISCOVERY;
 static volatile bool g_bridge_active = (BRIDGE_MODE == MODE_BRIDGE_ACTIVE);
 static volatile bool g_force_rescan_packs = true;
 static uint8_t g_param_audit_mask = 0;
-static RuntimePolicyOverride g_runtime_policy = default_runtime_policy();
+static RuntimePolicyOverride g_runtime_policy = configured_default_runtime_policy();
 static bool g_raw_log = false;
 static bool g_bat_raw_log = false;
-static bool g_auto_cell_log = AUTO_LOG_CELLS;
+static std::atomic<bool> g_auto_cell_log{AUTO_LOG_CELLS};
 static bool g_tbd_locked_no_wake = false;
-static uint32_t g_bat_poll_ok = 0;
-static uint32_t g_bat_poll_fail = 0;
-static uint32_t g_inv_req_count = 0;
-static uint32_t g_inv_resp_count = 0;
-static uint32_t g_inv_raw_bytes = 0;
+static std::atomic<uint32_t> g_bat_poll_ok{0u};
+static std::atomic<uint32_t> g_bat_poll_fail{0u};
+static std::atomic<uint32_t> g_inv_req_count{0u};
+static std::atomic<uint32_t> g_inv_resp_count{0u};
+static std::atomic<uint32_t> g_inv_raw_bytes{0u};
 static uint32_t g_last_inv_rx_ms = 0;
 
 static uint32_t g_inhibit_count = 0;
@@ -86,7 +105,7 @@ static uint32_t g_inv_61_cnt = 0;
 static uint32_t g_inv_62_cnt = 0;
 static uint32_t g_inv_63_cnt = 0;
 static uint32_t g_inv_other_cnt = 0;
-static uint32_t g_inv_mutex_miss = 0;
+static std::atomic<uint32_t> g_inv_mutex_miss{0u};
 static char g_inv_last_tx_61[144] = "";
 static char g_inv_last_tx_62[40] = "";
 static char g_inv_last_tx_63[48] = "";
@@ -569,7 +588,7 @@ static bool run_autodetect(const PolicyLimits& lim) {
             xSemaphoreGive(g_snap_mutex);
         }
         g_force_rescan_packs = true;
-        g_bat_poll_ok++;
+        g_bat_poll_ok.fetch_add(1u, std::memory_order_relaxed);
         Serial.printf("[SCAN] COCOK! %s @ addr=%u (V=%.2fV SOC=%.1f%%)\n",
                       lbl, base_addr, p.core.bus_v, p.core.soc);
     };
@@ -643,7 +662,7 @@ static void bat_poll_task(void* arg) {
 
     for (;;) {
         esp_task_wdt_reset();
-        RuntimePolicyOverride rpol = default_runtime_policy();
+        RuntimePolicyOverride rpol = configured_default_runtime_policy();
         bool dyn_disc = g_dynamic_discovery;
         if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
             rpol = g_runtime_policy;
@@ -695,7 +714,7 @@ static void bat_poll_task(void* arg) {
                 esp_task_wdt_reset();
                 PackState fresh{};
                 if (poll_single_pack(g_active_proto, g_pack_addrs[idx], lim, fresh)) {
-                    g_bat_poll_ok++;
+                    g_bat_poll_ok.fetch_add(1u, std::memory_order_relaxed);
                     if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
                         g_packs[idx] = fresh;
                         g_pack_online[idx] = true;
@@ -703,7 +722,7 @@ static void bat_poll_task(void* arg) {
                         xSemaphoreGive(g_snap_mutex);
                     }
                 } else {
-                    g_bat_poll_fail++;
+                    g_bat_poll_fail.fetch_add(1u, std::memory_order_relaxed);
                 }
                 vTaskDelay(pdMS_TO_TICKS(25));
             }
@@ -719,7 +738,7 @@ static void bat_poll_task(void* arg) {
                     uint32_t w = was_online[idx] ? 0u : 320u;
                     PackState fresh{};
                     if (poll_single_pack(g_active_proto, g_pack_addrs[idx], lim, fresh, w)) {
-                        g_bat_poll_ok++;
+                        g_bat_poll_ok.fetch_add(1u, std::memory_order_relaxed);
                         bool newly_online = false;
                         if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
                             newly_online = !g_pack_online[idx];
@@ -734,7 +753,7 @@ static void bat_poll_task(void* arg) {
                         }
                         has_online = true;
                     } else if (was_online[idx]) {
-                        g_bat_poll_fail++;
+                        g_bat_poll_fail.fetch_add(1u, std::memory_order_relaxed);
                         bool went_offline = false;
                         if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
                             g_pack_miss[idx]++;
@@ -761,7 +780,7 @@ static void bat_poll_task(void* arg) {
                     esp_task_wdt_reset();
                     PackState fresh{};
                     if (poll_single_pack(g_active_proto, g_pack_addrs[idx], lim, fresh, 0)) {
-                        g_bat_poll_ok++;
+                        g_bat_poll_ok.fetch_add(1u, std::memory_order_relaxed);
                         has_online = true;
                         if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
                             g_packs[idx] = fresh;
@@ -770,7 +789,7 @@ static void bat_poll_task(void* arg) {
                             xSemaphoreGive(g_snap_mutex);
                         }
                     } else {
-                        g_bat_poll_fail++;
+                        g_bat_poll_fail.fetch_add(1u, std::memory_order_relaxed);
                         bool went_offline = false;
                         if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
                             g_pack_miss[idx]++;
@@ -806,7 +825,7 @@ static void bat_poll_task(void* arg) {
                         esp_task_wdt_reset();
                         PackState fresh{};
                         if (poll_single_pack(g_active_proto, g_pack_addrs[target], lim, fresh, 320)) {
-                            g_bat_poll_ok++;
+                            g_bat_poll_ok.fetch_add(1u, std::memory_order_relaxed);
                             if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
                                 g_packs[target] = fresh;
                                 g_pack_online[target] = true;
@@ -886,7 +905,7 @@ static void bat_poll_task(void* arg) {
                     esp_task_wdt_reset();
                     PackState fresh{};
                     if (poll_single_pack(g_active_proto, g_pack_addrs[slot], lim, fresh, 0)) {
-                        g_bat_poll_ok++;
+                        g_bat_poll_ok.fetch_add(1u, std::memory_order_relaxed);
                         if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
                             g_packs[slot] = fresh;
                             g_pack_online[slot] = true;
@@ -894,7 +913,7 @@ static void bat_poll_task(void* arg) {
                             xSemaphoreGive(g_snap_mutex);
                         }
                     } else {
-                        g_bat_poll_fail++;
+                        g_bat_poll_fail.fetch_add(1u, std::memory_order_relaxed);
                     }
                     vTaskDelay(pdMS_TO_TICKS(15));
                 }
@@ -954,8 +973,7 @@ static void bat_poll_task(void* arg) {
                           new_bank.core.ccl, new_bank.core.dcl);
         }
         if (do_param_audit) {
-            PackEepromSnapshot eep_tmp{};
-            run_shoto_param_audit(param_slot, param_addr, new_bank, &eep_tmp);
+            run_shoto_param_audit(param_slot, param_addr, new_bank, nullptr);
         }
 
         if (millis() - last_log >= 5000) {
@@ -964,14 +982,17 @@ static void bat_poll_task(void* arg) {
             PackState packs_snap[MAX_PACKS]{};
             bool online_snap[MAX_PACKS]{};
             uint32_t max_age = 0;
-            uint32_t now_log = millis();
+            uint32_t now_log = 0;
             if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
                 snap = g_bank;
                 for (uint8_t i = 0; i < MAX_PACKS; ++i) {
                     packs_snap[i] = g_packs[i];
                     online_snap[i] = g_pack_online[i];
-                    if (g_pack_online[i] && packs_snap[i].core.complete) {
-                        uint32_t a = now_log - packs_snap[i].core.sampled_ms;
+                }
+                now_log = millis();
+                for (uint8_t i = 0; i < MAX_PACKS; ++i) {
+                    if (online_snap[i] && packs_snap[i].core.complete) {
+                        uint32_t a = age_since_ms(now_log, packs_snap[i].core.sampled_ms);
                         if (a > max_age) max_age = a;
                     }
                 }
@@ -984,13 +1005,13 @@ static void bat_poll_task(void* arg) {
                           snap.core.valid ? "YES" : "INHIBIT",
                           snap.bus_v, disp_i, disp_soc, snap.avg_temp_c,
                           snap.core.ccl, snap.core.dcl,
-                          static_cast<unsigned long>(g_bat_poll_ok),
-                          static_cast<unsigned long>(g_bat_poll_fail),
+                          static_cast<unsigned long>(g_bat_poll_ok.load(std::memory_order_relaxed)),
+                          static_cast<unsigned long>(g_bat_poll_fail.load(std::memory_order_relaxed)),
                           static_cast<unsigned long>(max_age),
-                          static_cast<unsigned long>(g_inv_req_count),
-                          static_cast<unsigned long>(g_inv_resp_count),
-                          static_cast<unsigned long>(g_inv_raw_bytes));
-            if (g_auto_cell_log) {
+                          static_cast<unsigned long>(g_inv_req_count.load(std::memory_order_relaxed)),
+                          static_cast<unsigned long>(g_inv_resp_count.load(std::memory_order_relaxed)),
+                          static_cast<unsigned long>(g_inv_raw_bytes.load(std::memory_order_relaxed)));
+            if (g_auto_cell_log.load(std::memory_order_relaxed)) {
                 for (uint8_t idx = 0; idx < MAX_PACKS; ++idx) {
                     if (online_snap[idx] && packs_snap[idx].ext.cell_count > 0) {
                         print_pack_cells(idx, packs_snap[idx]);
@@ -1024,7 +1045,7 @@ static void inv_bridge_task(void* arg) {
         while (InvSerial.available()) {
             int b = InvSerial.read();
             if (b < 0) break;
-            g_inv_raw_bytes++;
+            g_inv_raw_bytes.fetch_add(1u, std::memory_order_relaxed);
             if (g_raw_log) {
                 raw_chunk[raw_n++] = static_cast<uint8_t>(b);
                 raw_last_ms = millis();
@@ -1042,7 +1063,7 @@ static void inv_bridge_task(void* arg) {
                 }
                 if (c == '\r') {
                     rx_buf[rx_pos] = '\0';
-                    g_inv_req_count++;
+                    g_inv_req_count.fetch_add(1u, std::memory_order_relaxed);
                     g_last_inv_rx_ms = millis();
                     if (g_raw_log) {
                         Serial.printf("[INV RX] %s\n", rx_buf);
@@ -1054,7 +1075,7 @@ static void inv_bridge_task(void* arg) {
                         bridge_active = g_bridge_active;
                         xSemaphoreGive(g_snap_mutex);
                     } else {
-                        g_inv_mutex_miss++;
+                        g_inv_mutex_miss.fetch_add(1u, std::memory_order_relaxed);
                     }
                     if (bridge_active) {
                         char resp[360];
@@ -1062,7 +1083,7 @@ static void inv_bridge_task(void* arg) {
                         if (resp_len > 0) {
                             InvSerial.write(reinterpret_cast<const uint8_t*>(resp), resp_len);
                             InvSerial.flush();
-                            g_inv_resp_count++;
+                            g_inv_resp_count.fetch_add(1u, std::memory_order_relaxed);
                             uint32_t now_tx = millis();
                             if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
                                 if (rx_pos >= 18u) {
@@ -1088,7 +1109,7 @@ static void inv_bridge_task(void* arg) {
                                 }
                                 xSemaphoreGive(g_snap_mutex);
                             } else {
-                                g_inv_mutex_miss++;
+                                g_inv_mutex_miss.fetch_add(1u, std::memory_order_relaxed);
                             }
                             if (g_raw_log) {
                                 Serial.printf("[INV TX] %s\n", resp);
@@ -1121,13 +1142,14 @@ static size_t g_ha_cmd_tail = 0u;
 static size_t g_ha_cmd_count = 0u;
 
 static void reset_diag_counters() {
+    g_bat_poll_ok.store(0u, std::memory_order_relaxed);
+    g_bat_poll_fail.store(0u, std::memory_order_relaxed);
+    g_inv_req_count.store(0u, std::memory_order_relaxed);
+    g_inv_resp_count.store(0u, std::memory_order_relaxed);
+    g_inv_raw_bytes.store(0u, std::memory_order_relaxed);
+    g_inv_mutex_miss.store(0u, std::memory_order_relaxed);
     if (!g_snap_mutex) return;
     if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        g_bat_poll_ok = 0u;
-        g_bat_poll_fail = 0u;
-        g_inv_req_count = 0u;
-        g_inv_resp_count = 0u;
-        g_inv_raw_bytes = 0u;
         g_inhibit_count = 0u;
         g_delta_v_retry_ok = 0u;
         g_delta_v_retry_fail = 0u;
@@ -1142,7 +1164,6 @@ static void reset_diag_counters() {
         g_inv_62_cnt = 0u;
         g_inv_63_cnt = 0u;
         g_inv_other_cnt = 0u;
-        g_inv_mutex_miss = 0u;
         g_inv_last_tx_61[0] = '\0';
         g_inv_last_tx_62[0] = '\0';
         g_inv_last_tx_63[0] = '\0';
@@ -1158,14 +1179,17 @@ static void load_ha_nvs_settings() {
     if (!prefs.begin("shoto_ha", true)) {
         return;
     }
-    RuntimePolicyOverride p = default_runtime_policy();
-    p.cvl_v = prefs.getFloat("cvl", p.cvl_v);
-    p.dvl_v = prefs.getFloat("dvl", p.dvl_v);
-    p.ccl_max_a = prefs.getFloat("ccl", p.ccl_max_a);
-    p.dcl_max_a = prefs.getFloat("dcl", p.dcl_max_a);
-    p.max_delta_v = prefs.getFloat("dv", p.max_delta_v);
-    p.modified = prefs.getBool("mod", false);
-    clamp_runtime_policy(p);
+    RuntimePolicyOverride p = configured_default_runtime_policy();
+    bool mod = prefs.getBool("mod", false);
+    if (mod) {
+        p.cvl_v = prefs.getFloat("cvl", p.cvl_v);
+        p.dvl_v = prefs.getFloat("dvl", p.dvl_v);
+        p.ccl_max_a = prefs.getFloat("ccl", p.ccl_max_a);
+        p.dcl_max_a = prefs.getFloat("dcl", p.dcl_max_a);
+        p.max_delta_v = prefs.getFloat("dv", p.max_delta_v);
+        p.modified = true;
+        clamp_runtime_policy(p);
+    }
 
     bool dyn_disc = prefs.getBool("dyn_disc", DYNAMIC_PACK_DISCOVERY);
     bool bridge_act = prefs.getBool("bridge_act", BRIDGE_MODE == MODE_BRIDGE_ACTIVE);
@@ -1176,14 +1200,13 @@ static void load_ha_nvs_settings() {
         g_runtime_policy = p;
         g_dynamic_discovery = dyn_disc;
         g_bridge_active = bridge_act;
-        g_auto_cell_log = cell_log;
         xSemaphoreGive(g_snap_mutex);
     } else {
         g_runtime_policy = p;
         g_dynamic_discovery = dyn_disc;
         g_bridge_active = bridge_act;
-        g_auto_cell_log = cell_log;
     }
+    g_auto_cell_log.store(cell_log, std::memory_order_relaxed);
     Serial.printf("[HA NVS] Loaded policy CVL=%.2fV DVL=%.2fV CCL=%.1fA DCL=%.1fA dV=%.2fV | Bridge=%s Dyn=%s\n",
                   p.cvl_v, p.dvl_v, p.ccl_max_a, p.dcl_max_a, p.max_delta_v,
                   bridge_act ? "ACTIVE" : "MONITOR_ONLY",
@@ -1191,16 +1214,15 @@ static void load_ha_nvs_settings() {
 }
 
 static void save_ha_nvs_settings() {
-    RuntimePolicyOverride p = default_runtime_policy();
+    RuntimePolicyOverride p = configured_default_runtime_policy();
     bool dyn_disc = DYNAMIC_PACK_DISCOVERY;
     bool bridge_act = (BRIDGE_MODE == MODE_BRIDGE_ACTIVE);
-    bool cell_log = AUTO_LOG_CELLS;
+    bool cell_log = g_auto_cell_log.load(std::memory_order_relaxed);
 
     if (g_snap_mutex && xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
         p = g_runtime_policy;
         dyn_disc = g_dynamic_discovery;
         bridge_act = g_bridge_active;
-        cell_log = g_auto_cell_log;
         xSemaphoreGive(g_snap_mutex);
     }
     clamp_runtime_policy(p);
@@ -1331,6 +1353,9 @@ static void ha_mqtt_task(void* arg) {
             if (OTA_PASS[0] != '\0') {
                 ArduinoOTA.setPassword(OTA_PASS);
             }
+            ArduinoOTA.onStart([]() { esp_task_wdt_reset(); });
+            ArduinoOTA.onProgress([](unsigned int, unsigned int) { esp_task_wdt_reset(); });
+            ArduinoOTA.onError([](ota_error_t) { esp_task_wdt_reset(); });
             ArduinoOTA.begin();
             ota_initialized = true;
         }
@@ -1416,10 +1441,7 @@ static void ha_mqtt_task(void* arg) {
                     ESP.restart();
                     break;
                 case HA_ACT_SET_CELL_LOG:
-                    if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
-                        g_auto_cell_log = cmd.bool_val;
-                        xSemaphoreGive(g_snap_mutex);
-                    }
+                    g_auto_cell_log.store(cmd.bool_val, std::memory_order_relaxed);
                     need_nvs_save = true;
                     break;
                 case HA_ACT_SET_MAINT_UNLOCK:
@@ -1464,7 +1486,7 @@ static void ha_mqtt_task(void* arg) {
                     break;
                 case HA_ACT_RESET_POLICY:
                     if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
-                        g_runtime_policy = default_runtime_policy();
+                        g_runtime_policy = configured_default_runtime_policy();
                         xSemaphoreGive(g_snap_mutex);
                     }
                     need_nvs_save = true;
@@ -1511,7 +1533,8 @@ static void ha_mqtt_task(void* arg) {
             bool bridge_act = (BRIDGE_MODE == MODE_BRIDGE_ACTIVE);
             bool maint_unl = false;
             uint32_t maint_ms = 0u;
-            RuntimePolicyOverride pol_snap = default_runtime_policy();
+            RuntimePolicyOverride pol_snap = configured_default_runtime_policy();
+            uint32_t snap_now_ms = 0u;
 
             bool copied = false;
             if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
@@ -1530,17 +1553,16 @@ static void ha_mqtt_task(void* arg) {
                 pol_snap = g_runtime_policy;
 
                 diag_snap.proto = g_active_proto;
-                diag_snap.cell_log = g_auto_cell_log;
-                diag_snap.bat_poll_ok = g_bat_poll_ok;
-                diag_snap.bat_poll_fail = g_bat_poll_fail;
-                diag_snap.inv_req_count = g_inv_req_count;
-                diag_snap.inv_resp_count = g_inv_resp_count;
-                diag_snap.inv_raw_bytes = g_inv_raw_bytes;
+                diag_snap.cell_log = g_auto_cell_log.load(std::memory_order_relaxed);
+                diag_snap.bat_poll_ok = g_bat_poll_ok.load(std::memory_order_relaxed);
+                diag_snap.bat_poll_fail = g_bat_poll_fail.load(std::memory_order_relaxed);
+                diag_snap.inv_req_count = g_inv_req_count.load(std::memory_order_relaxed);
+                diag_snap.inv_resp_count = g_inv_resp_count.load(std::memory_order_relaxed);
+                diag_snap.inv_raw_bytes = g_inv_raw_bytes.load(std::memory_order_relaxed);
                 diag_snap.inhibit_count = g_inhibit_count;
                 diag_snap.dv_retry_ok = g_delta_v_retry_ok;
                 diag_snap.dv_retry_fail = g_delta_v_retry_fail;
                 diag_snap.last_inhibit_reason = g_last_inhibit_reason;
-                diag_snap.last_inhibit_age_ms = (g_last_inhibit_ms > 0u) ? (now_ms - g_last_inhibit_ms) : 0u;
                 diag_snap.last_inhibit_dv = g_last_inhibit_dv;
                 diag_snap.peak_dv = g_peak_delta_v;
                 diag_snap.peak_age_ms = g_peak_age_ms;
@@ -1549,13 +1571,15 @@ static void ha_mqtt_task(void* arg) {
                 diag_snap.inv_62 = g_inv_62_cnt;
                 diag_snap.inv_63 = g_inv_63_cnt;
                 diag_snap.inv_other = g_inv_other_cnt;
-                diag_snap.inv_mtx_miss = g_inv_mutex_miss;
+                diag_snap.inv_mtx_miss = g_inv_mutex_miss.load(std::memory_order_relaxed);
                 std::memcpy(diag_snap.tx61, g_inv_last_tx_61, sizeof(diag_snap.tx61));
                 std::memcpy(diag_snap.tx62, g_inv_last_tx_62, sizeof(diag_snap.tx62));
                 std::memcpy(diag_snap.tx63, g_inv_last_tx_63, sizeof(diag_snap.tx63));
-                diag_snap.tx61_age_ms = (g_inv_last_61_ms > 0u) ? (now_ms - g_inv_last_61_ms) : 0u;
-                diag_snap.tx62_age_ms = (g_inv_last_62_ms > 0u) ? (now_ms - g_inv_last_62_ms) : 0u;
-                diag_snap.tx63_age_ms = (g_inv_last_63_ms > 0u) ? (now_ms - g_inv_last_63_ms) : 0u;
+                snap_now_ms = millis();
+                diag_snap.last_inhibit_age_ms = age_since_ms(snap_now_ms, g_last_inhibit_ms);
+                diag_snap.tx61_age_ms = age_since_ms(snap_now_ms, g_inv_last_61_ms);
+                diag_snap.tx62_age_ms = age_since_ms(snap_now_ms, g_inv_last_62_ms);
+                diag_snap.tx63_age_ms = age_since_ms(snap_now_ms, g_inv_last_63_ms);
                 g_ha_eeprom_dirty = false;
                 copied = true;
                 xSemaphoreGive(g_snap_mutex);
@@ -1564,7 +1588,8 @@ static void ha_mqtt_task(void* arg) {
             if (copied) {
                 uint32_t maint_rem_s = 0u;
                 if (maint_unl) {
-                    uint32_t elapsed = now_ms - maint_ms;
+                    uint32_t elapsed = age_since_ms(snap_now_ms, maint_ms);
+                    if (maint_ms == 0u) elapsed = snap_now_ms;
                     if (elapsed < HA_MAINT_UNLOCK_TIMEOUT_MS) {
                         maint_rem_s = (HA_MAINT_UNLOCK_TIMEOUT_MS - elapsed + 999UL) / 1000UL;
                     }
@@ -1597,7 +1622,7 @@ static void ha_mqtt_task(void* arg) {
 
                     for (uint8_t slot = 0u; slot < MAX_PACKS; ++slot) {
                         uint32_t age_ms = (online_snap[slot] && packs_snap[slot].core.complete)
-                            ? (now_ms - packs_snap[slot].core.sampled_ms)
+                            ? age_since_ms(snap_now_ms, packs_snap[slot].core.sampled_ms)
                             : 0u;
                         if (build_pack_state_json(static_cast<uint8_t>(slot + 1u), online_snap[slot],
                                                   packs_snap[slot], age_ms, miss_snap[slot],
@@ -1688,6 +1713,7 @@ static void handle_serial_cli() {
                 uint32_t tx63_ms;
             };
             DiagSnap dsnap = {};
+            uint32_t now_cli = 0u;
             if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
                 snap = g_bank;
                 dyn_disc_snap = g_dynamic_discovery;
@@ -1711,13 +1737,14 @@ static void handle_serial_cli() {
                 dsnap.inv_62 = g_inv_62_cnt;
                 dsnap.inv_63 = g_inv_63_cnt;
                 dsnap.inv_other = g_inv_other_cnt;
-                dsnap.inv_mtx_miss = g_inv_mutex_miss;
+                dsnap.inv_mtx_miss = g_inv_mutex_miss.load(std::memory_order_relaxed);
                 std::memcpy(dsnap.tx61, g_inv_last_tx_61, sizeof(dsnap.tx61));
                 std::memcpy(dsnap.tx62, g_inv_last_tx_62, sizeof(dsnap.tx62));
                 std::memcpy(dsnap.tx63, g_inv_last_tx_63, sizeof(dsnap.tx63));
                 dsnap.tx61_ms = g_inv_last_61_ms;
                 dsnap.tx62_ms = g_inv_last_62_ms;
                 dsnap.tx63_ms = g_inv_last_63_ms;
+                now_cli = millis();
                 xSemaphoreGive(g_snap_mutex);
             }
 
@@ -1735,8 +1762,8 @@ static void handle_serial_cli() {
                               snap.core.valid ? snap.core.soc : snap.raw_soc,
                               snap.raw_soc, snap.soh,
                               snap.core.cvl, snap.core.dvl, snap.core.ccl, snap.core.dcl,
-                              static_cast<unsigned long>(g_bat_poll_ok),
-                              static_cast<unsigned long>(g_bat_poll_fail),
+                              static_cast<unsigned long>(g_bat_poll_ok.load(std::memory_order_relaxed)),
+                              static_cast<unsigned long>(g_bat_poll_fail.load(std::memory_order_relaxed)),
                               snap.min_cell_mv, snap.max_cell_mv);
                 Serial.printf("Diag: inhibit=%lu (last=%s dV=%.2fV age=%lums) dvRetry=%lu/%lu peakDV=%.2fV peakAge=%lums | INV 60=%lu 61=%lu 62=%lu 63=%lu oth=%lu mtxMiss=%lu\n",
                               static_cast<unsigned long>(dsnap.inhibit_count),
@@ -1757,7 +1784,7 @@ static void handle_serial_cli() {
                     const PackState& ps = ps_snap[i];
                     if (online_snap[i]) {
                         Serial.printf("  Pack#%d (addr=%u) [ONLINE]: age=%lums V=%.2fV I=%.2fA SOC=%.1f%% prot=%#06x fault=%#04x\n",
-                                      i + 1, g_pack_addrs[i], static_cast<unsigned long>(millis() - ps.core.sampled_ms),
+                                      i + 1, g_pack_addrs[i], static_cast<unsigned long>(age_since_ms(now_cli, ps.core.sampled_ms)),
                                       ps.core.bus_v, ps.core.bus_a, ps.core.soc,
                                       ps.ext.prot_flags, ps.ext.fault_flags);
                     } else {
@@ -1768,25 +1795,24 @@ static void handle_serial_cli() {
                 const char* inv_mode = (dsnap.inv_63 > 0u && dsnap.inv_62 > 0u)
                     ? "PYL_FULL (63H+61H+62H)"
                     : ((dsnap.inv_61 > 0u && dsnap.inv_63 == 0u) ? "SCAN_61H_ONLY (USE/LIA)" : "IDLE/OTHER");
-                uint32_t now_cli = millis();
                 Serial.printf("[DIAG BANK] valid=%s packs=%u/%u inhibit=%lu (last=%s @-%lums dV=%.2fV age=%lums) dvRetry=%lu/%lu peakDV=%.2fV peakAge=%lums bat_ok=%lu bat_err=%lu\n",
                               snap.core.valid ? "YES" : "INHIBIT",
                               snap.pack_count, static_cast<unsigned>(MAX_PACKS),
                               static_cast<unsigned long>(dsnap.inhibit_count),
                               inhibit_reason_name(dsnap.last_inhibit_reason),
-                              static_cast<unsigned long>(dsnap.last_inhibit_ms > 0u ? (now_cli - dsnap.last_inhibit_ms) : 0u),
+                              static_cast<unsigned long>(age_since_ms(now_cli, dsnap.last_inhibit_ms)),
                               dsnap.last_inhibit_dv,
                               static_cast<unsigned long>(dsnap.last_inhibit_age_ms),
                               static_cast<unsigned long>(dsnap.dv_retry_ok),
                               static_cast<unsigned long>(dsnap.dv_retry_fail),
                               dsnap.peak_dv,
                               static_cast<unsigned long>(dsnap.peak_age_ms),
-                              static_cast<unsigned long>(g_bat_poll_ok),
-                              static_cast<unsigned long>(g_bat_poll_fail));
+                              static_cast<unsigned long>(g_bat_poll_ok.load(std::memory_order_relaxed)),
+                              static_cast<unsigned long>(g_bat_poll_fail.load(std::memory_order_relaxed)));
                 Serial.printf("[DIAG INV] mode=%s rx=%lu tx=%lu | 60H=%lu 61H=%lu 62H=%lu 63H=%lu other=%lu mtxMiss=%lu\n",
                               inv_mode,
-                              static_cast<unsigned long>(g_inv_req_count),
-                              static_cast<unsigned long>(g_inv_resp_count),
+                              static_cast<unsigned long>(g_inv_req_count.load(std::memory_order_relaxed)),
+                              static_cast<unsigned long>(g_inv_resp_count.load(std::memory_order_relaxed)),
                               static_cast<unsigned long>(dsnap.inv_60),
                               static_cast<unsigned long>(dsnap.inv_61),
                               static_cast<unsigned long>(dsnap.inv_62),
@@ -1794,13 +1820,13 @@ static void handle_serial_cli() {
                               static_cast<unsigned long>(dsnap.inv_other),
                               static_cast<unsigned long>(dsnap.inv_mtx_miss));
                 Serial.printf("[DIAG TX63] age=%lums %s\n",
-                              static_cast<unsigned long>(dsnap.tx63_ms > 0u ? (now_cli - dsnap.tx63_ms) : 0u),
+                              static_cast<unsigned long>(age_since_ms(now_cli, dsnap.tx63_ms)),
                               dsnap.tx63[0] ? dsnap.tx63 : "<none>");
                 Serial.printf("[DIAG TX62] age=%lums %s\n",
-                              static_cast<unsigned long>(dsnap.tx62_ms > 0u ? (now_cli - dsnap.tx62_ms) : 0u),
+                              static_cast<unsigned long>(age_since_ms(now_cli, dsnap.tx62_ms)),
                               dsnap.tx62[0] ? dsnap.tx62 : "<none>");
                 Serial.printf("[DIAG TX61] age=%lums %s\n",
-                              static_cast<unsigned long>(dsnap.tx61_ms > 0u ? (now_cli - dsnap.tx61_ms) : 0u),
+                              static_cast<unsigned long>(age_since_ms(now_cli, dsnap.tx61_ms)),
                               dsnap.tx61[0] ? dsnap.tx61 : "<none>");
             } else if (std::strcmp(cmd_buf, "packs") == 0) {
                 Serial.printf("DynDiscovery=%s | ActivePacks=%u/%u | BankValid=%s | Cap=%.0fAh CCL=%.1fA DCL=%.1fA\n",
@@ -1813,7 +1839,7 @@ static void handle_serial_cli() {
                     if (online_snap[i]) {
                         Serial.printf("  Slot#%d (addr=%u): ONLINE  V=%.2fV I=%.2fA SOC=%.1f%% miss=%u age=%lums\n",
                                       i + 1, g_pack_addrs[i], ps.core.bus_v, ps.core.bus_a, ps.core.soc,
-                                      miss_snap[i], static_cast<unsigned long>(millis() - ps.core.sampled_ms));
+                                      miss_snap[i], static_cast<unsigned long>(age_since_ms(now_cli, ps.core.sampled_ms)));
                     } else {
                         Serial.printf("  Slot#%d (addr=%u): OFFLINE\n", i + 1, g_pack_addrs[i]);
                     }
@@ -1833,8 +1859,9 @@ static void handle_serial_cli() {
                     Serial.println("[CELLS] Belum ada pack online / data sel.");
                 }
             } else if (std::strcmp(cmd_buf, "celllog") == 0) {
-                g_auto_cell_log = !g_auto_cell_log;
-                Serial.printf("Auto per-cell logging: %s\n", g_auto_cell_log ? "ON" : "OFF");
+                bool next_cl = !g_auto_cell_log.load(std::memory_order_relaxed);
+                g_auto_cell_log.store(next_cl, std::memory_order_relaxed);
+                Serial.printf("Auto per-cell logging: %s\n", next_cl ? "ON" : "OFF");
             } else if (std::strcmp(cmd_buf, "raw") == 0) {
                 g_raw_log = !g_raw_log;
                 Serial.printf("Raw Inverter frame logging: %s\n", g_raw_log ? "ON" : "OFF");
