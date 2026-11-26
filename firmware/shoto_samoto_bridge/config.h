@@ -75,16 +75,16 @@
 //    - ENABLE_HA_MQTT = 0 -> Mode bench/offline murni (tidak butuh PubSubClient/secrets.h)
 //    - ENABLE_HA_MQTT = 1 -> Aktifkan task non-blocking ha_mqtt_task (Core 0, prio 1)
 #ifndef ENABLE_HA_MQTT
-  #define ENABLE_HA_MQTT             0
+  #define ENABLE_HA_MQTT             1
 #endif
 #ifndef HA_DEVICE_ID
-  #define HA_DEVICE_ID               "shoto_ils6300"
+  #define HA_DEVICE_ID               "shoto_ihf6200"
 #endif
 #ifndef HA_SITE_NAME
-  #define HA_SITE_NAME               "PLTS Samoto ILS6300"
+  #define HA_SITE_NAME               "PLTS Samoto IHF6200"
 #endif
 #ifndef MQTT_TOPIC_PREFIX
-  #define MQTT_TOPIC_PREFIX          "shoto_bridge/ils6300"
+  #define MQTT_TOPIC_PREFIX          "shoto_bridge/ihf6200"
 #endif
 #ifndef HA_TELEMETRY_INTERVAL_MS
   #define HA_TELEMETRY_INTERVAL_MS   3000UL

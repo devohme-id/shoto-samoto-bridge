@@ -118,7 +118,7 @@ class TestHomeAssistantArtifacts(unittest.TestCase):
             "::1",
             "172.30.33.0/24",
             "172.16.0.0/12",
-            "192.168.1.50",
+            "192.168.10.250",
         ):
             self.assertIn(required_proxy, proxies)
 
@@ -362,7 +362,7 @@ class TestShotoLovelaceDashboard(unittest.TestCase):
 
     def test_dashboard_entities_match_firmware_discovery_exact(self):
         dev_id = parse_ha_device_id()
-        self.assertEqual(dev_id, "shoto_ils6300")
+        self.assertEqual(dev_id, "shoto_ihf6200")
         expected_entities = parse_discovery_entities(dev_id, max_packs=4)
         # 64 global + 4 * (17 static + 5 temps + 15 cells = 37) = 212
         self.assertEqual(len(expected_entities), 212)
@@ -407,7 +407,7 @@ class TestShotoLovelaceDashboard(unittest.TestCase):
         joined = "\n".join(strings)
 
         attr_re = re.compile(
-            r"state_attr\(\s*['\"](binary_sensor\.shoto_ils6300_pack([1-4])_eep_valid)['\"]\s*,\s*['\"]([a-z0-9_]+)['\"]\s*\)"
+            r"state_attr\(\s*['\"](binary_sensor\.shoto_ihf6200_pack([1-4])_eep_valid)['\"]\s*,\s*['\"]([a-z0-9_]+)['\"]\s*\)"
         )
         matches = attr_re.findall(joined)
         self.assertGreater(len(matches), 0, "View 3 must render state_attr() for pack*_eep_valid")
@@ -430,7 +430,7 @@ class TestShotoLovelaceDashboard(unittest.TestCase):
                 f"Pack {pack_num} in View 3 missing EEPROM attributes: {missing}",
             )
             self.assertIn(
-                f"state_attr('binary_sensor.shoto_ils6300_pack{pack_num}_eep_valid', 'valid')",
+                f"state_attr('binary_sensor.shoto_ihf6200_pack{pack_num}_eep_valid', 'valid')",
                 joined,
             )
 
@@ -442,8 +442,8 @@ class TestShotoLovelaceDashboard(unittest.TestCase):
             if card.get("type") == "conditional"
             for cond in card.get("conditions", [])
         }
-        self.assertEqual(cond_entities.get("binary_sensor.shoto_ils6300_pack3_online"), "on")
-        self.assertEqual(cond_entities.get("binary_sensor.shoto_ils6300_pack4_online"), "on")
+        self.assertEqual(cond_entities.get("binary_sensor.shoto_ihf6200_pack3_online"), "on")
+        self.assertEqual(cond_entities.get("binary_sensor.shoto_ihf6200_pack4_online"), "on")
 
     def test_dashboard_view4_critical_controls_gated_by_maint_unlock(self):
         dash = load_yaml_file(self.DASHBOARD_PATH)
@@ -476,7 +476,7 @@ class TestShotoLovelaceDashboard(unittest.TestCase):
             c["card"]
             for c in conditionals
             if any(
-                cond.get("entity") == "switch.shoto_ils6300_sw_maint_unlock"
+                cond.get("entity") == "switch.shoto_ihf6200_sw_maint_unlock"
                 and cond.get("state") == "on"
                 for cond in c.get("conditions", [])
             )
@@ -485,7 +485,7 @@ class TestShotoLovelaceDashboard(unittest.TestCase):
             c["card"]
             for c in conditionals
             if any(
-                cond.get("entity") == "switch.shoto_ils6300_sw_maint_unlock"
+                cond.get("entity") == "switch.shoto_ihf6200_sw_maint_unlock"
                 and cond.get("state") == "off"
                 for cond in c.get("conditions", [])
             )
@@ -499,15 +499,15 @@ class TestShotoLovelaceDashboard(unittest.TestCase):
         walk_lovelace_nodes(unlock_on_cards[0], on_types, on_strings, is_card=True)
         on_joined = "\n".join(on_strings)
         for critical_ent in (
-            "select.shoto_ils6300_sel_bridge_mode",
-            "switch.shoto_ils6300_sw_dyn_discovery",
-            "number.shoto_ils6300_num_policy_cvl",
-            "number.shoto_ils6300_num_policy_dvl",
-            "number.shoto_ils6300_num_policy_ccl",
-            "number.shoto_ils6300_num_policy_dcl",
-            "number.shoto_ils6300_num_policy_max_dv",
-            "button.shoto_ils6300_btn_policy_reset",
-            "button.shoto_ils6300_btn_restart",
+            "select.shoto_ihf6200_sel_bridge_mode",
+            "switch.shoto_ihf6200_sw_dyn_discovery",
+            "number.shoto_ihf6200_num_policy_cvl",
+            "number.shoto_ihf6200_num_policy_dvl",
+            "number.shoto_ihf6200_num_policy_ccl",
+            "number.shoto_ihf6200_num_policy_dcl",
+            "number.shoto_ihf6200_num_policy_max_dv",
+            "button.shoto_ihf6200_btn_policy_reset",
+            "button.shoto_ihf6200_btn_restart",
         ):
             self.assertIn(critical_ent, on_joined)
 
@@ -618,7 +618,7 @@ class TestShotoAutomationsAndScripts(unittest.TestCase):
         inhibit_triggers = by_id["shoto_bms_bank_inhibit_alert"].get(
             "trigger", by_id["shoto_bms_bank_inhibit_alert"].get("triggers")
         )
-        self.assertEqual(inhibit_triggers[0].get("entity_id"), "binary_sensor.shoto_ils6300_bank_valid")
+        self.assertEqual(inhibit_triggers[0].get("entity_id"), "binary_sensor.shoto_ihf6200_bank_valid")
         self.assertEqual(inhibit_triggers[0].get("to"), "off")
         self.assertEqual(parse_ha_duration_s(inhibit_triggers[0].get("for")), 10)
 
@@ -628,7 +628,7 @@ class TestShotoAutomationsAndScripts(unittest.TestCase):
         )
         self.assertEqual(
             pack_off_triggers[0].get("entity_id"),
-            [f"binary_sensor.shoto_ils6300_pack{i}_online" for i in range(1, 5)],
+            [f"binary_sensor.shoto_ihf6200_pack{i}_online" for i in range(1, 5)],
         )
         self.assertEqual(pack_off_triggers[0].get("from"), "on")
         self.assertEqual(pack_off_triggers[0].get("to"), "off")
@@ -640,7 +640,7 @@ class TestShotoAutomationsAndScripts(unittest.TestCase):
         )
         self.assertEqual(soc_warn_tr[0].get("platform", soc_warn_tr[0].get("trigger")), "template")
         soc_warn_tpl = soc_warn_tr[0].get("value_template", "")
-        self.assertIn("is_number(states('sensor.shoto_ils6300_bank_soc'))", soc_warn_tpl)
+        self.assertIn("is_number(states('sensor.shoto_ihf6200_bank_soc'))", soc_warn_tpl)
         self.assertIn("<= 25", soc_warn_tpl)
         self.assertEqual(parse_ha_duration_s(soc_warn_tr[0].get("for")), 60)
 
@@ -649,7 +649,7 @@ class TestShotoAutomationsAndScripts(unittest.TestCase):
         )
         self.assertEqual(soc_crit_tr[0].get("platform", soc_crit_tr[0].get("trigger")), "template")
         soc_crit_tpl = soc_crit_tr[0].get("value_template", "")
-        self.assertIn("is_number(states('sensor.shoto_ils6300_bank_soc'))", soc_crit_tpl)
+        self.assertIn("is_number(states('sensor.shoto_ihf6200_bank_soc'))", soc_crit_tpl)
         self.assertIn("<= 20", soc_crit_tpl)
         self.assertEqual(parse_ha_duration_s(soc_crit_tr[0].get("for")), 30)
 
@@ -659,7 +659,7 @@ class TestShotoAutomationsAndScripts(unittest.TestCase):
         )
         self.assertEqual(dv_tr[0].get("platform", dv_tr[0].get("trigger")), "template")
         dv_tpl = dv_tr[0].get("value_template", "")
-        self.assertIn("is_number(states('sensor.shoto_ils6300_bank_cell_dv_mv'))", dv_tpl)
+        self.assertIn("is_number(states('sensor.shoto_ihf6200_bank_cell_dv_mv'))", dv_tpl)
         self.assertIn(">= 80", dv_tpl)
         self.assertEqual(parse_ha_duration_s(dv_tr[0].get("for")), 60)
 
@@ -669,7 +669,7 @@ class TestShotoAutomationsAndScripts(unittest.TestCase):
         )
         self.assertEqual(temp_tr[0].get("platform", temp_tr[0].get("trigger")), "template")
         temp_tpl = temp_tr[0].get("value_template", "")
-        self.assertIn("is_number(states('sensor.shoto_ils6300_bank_temp_max'))", temp_tpl)
+        self.assertIn("is_number(states('sensor.shoto_ihf6200_bank_temp_max'))", temp_tpl)
         self.assertIn(">= 48", temp_tpl)
         self.assertEqual(parse_ha_duration_s(temp_tr[0].get("for")), 60)
 
@@ -680,22 +680,22 @@ class TestShotoAutomationsAndScripts(unittest.TestCase):
         self.assertIn("bridge_offline", stalled_by_id)
         self.assertIn("inv_63_stalled", stalled_by_id)
         bridge_offline_tr = stalled_by_id["bridge_offline"]
-        self.assertEqual(bridge_offline_tr.get("entity_id"), "binary_sensor.shoto_ils6300_bank_valid")
+        self.assertEqual(bridge_offline_tr.get("entity_id"), "binary_sensor.shoto_ihf6200_bank_valid")
         self.assertEqual(bridge_offline_tr.get("to"), "unavailable")
         self.assertEqual(parse_ha_duration_s(bridge_offline_tr.get("for")), 120)
 
         stalled_strings: list[str] = []
         collect_yaml_strings(stalled_auto, stalled_strings)
         stalled_joined = "\n".join(stalled_strings)
-        self.assertIn("binary_sensor.shoto_ils6300_bank_valid", stalled_joined)
-        self.assertIn("sensor.shoto_ils6300_diag_inv_63", stalled_joined)
+        self.assertIn("binary_sensor.shoto_ihf6200_bank_valid", stalled_joined)
+        self.assertIn("sensor.shoto_ihf6200_diag_inv_63", stalled_joined)
         self.assertIn("unavailable", stalled_joined)
         self.assertIn("> 120", stalled_joined)
 
         # 8. Maintenance unlock backup auto-relock <= 300s (5 minutes)
         relock_auto = by_id["shoto_bms_maint_unlock_auto_relock"]
         relock_tr = relock_auto.get("trigger", relock_auto.get("triggers"))
-        self.assertEqual(relock_tr[0].get("entity_id"), "switch.shoto_ils6300_sw_maint_unlock")
+        self.assertEqual(relock_tr[0].get("entity_id"), "switch.shoto_ihf6200_sw_maint_unlock")
         self.assertEqual(relock_tr[0].get("to"), "on")
         relock_s = parse_ha_duration_s(relock_tr[0].get("for"))
         self.assertGreater(relock_s, 0)
@@ -704,10 +704,10 @@ class TestShotoAutomationsAndScripts(unittest.TestCase):
         self.assertTrue(
             any(
                 s.get("service", s.get("action")) == "switch.turn_off"
-                and s.get("target", {}).get("entity_id") == "switch.shoto_ils6300_sw_maint_unlock"
+                and s.get("target", {}).get("entity_id") == "switch.shoto_ihf6200_sw_maint_unlock"
                 for s in relock_steps
             ),
-            "Auto-relock must call switch.turn_off on switch.shoto_ils6300_sw_maint_unlock",
+            "Auto-relock must call switch.turn_off on switch.shoto_ihf6200_sw_maint_unlock",
         )
 
         # Every alert automation must create persistent_notification and guard notify.notify with continue_on_error: true
@@ -722,7 +722,7 @@ class TestShotoAutomationsAndScripts(unittest.TestCase):
                 self.assertIs(ns.get("continue_on_error"), True, f"{alert_id} notify.notify must set continue_on_error: true")
             strings: list[str] = []
             collect_yaml_strings(auto, strings)
-            self.assertIn("PLTS Samoto ILS6300", "\n".join(strings), f"{alert_id} missing HA_SITE_NAME")
+            self.assertIn("PLTS Samoto IHF6200", "\n".join(strings), f"{alert_id} missing HA_SITE_NAME")
 
     def test_scripts_yaml_structure_and_read_only_audit(self):
         self.assertTrue(
@@ -753,10 +753,10 @@ class TestShotoAutomationsAndScripts(unittest.TestCase):
         self.assertTrue(
             any(
                 s.get("service", s.get("action")) == "button.press"
-                and s.get("target", {}).get("entity_id") == "button.shoto_ils6300_btn_audit_eeprom_all"
+                and s.get("target", {}).get("entity_id") == "button.shoto_ihf6200_btn_audit_eeprom_all"
                 for s in audit_steps
             ),
-            "Audit script must press button.shoto_ils6300_btn_audit_eeprom_all",
+            "Audit script must press button.shoto_ihf6200_btn_audit_eeprom_all",
         )
         delays = [parse_ha_duration_s(s["delay"]) for s in audit_steps if "delay" in s]
         self.assertTrue(any(d >= 25 for d in delays), "Audit script must wait >= 25s for 1..4 pack EEPROM scan completion")
@@ -764,7 +764,7 @@ class TestShotoAutomationsAndScripts(unittest.TestCase):
         collect_yaml_strings(audit_sc, audit_strings)
         audit_joined = "\n".join(audit_strings)
         for slot in range(1, 5):
-            self.assertIn(f"binary_sensor.shoto_ils6300_pack{slot}_eep_valid", audit_joined)
+            self.assertIn(f"binary_sensor.shoto_ihf6200_pack{slot}_eep_valid", audit_joined)
         audit_services = [s.get("service", s.get("action")) for s in audit_steps]
         self.assertIn("persistent_notification.create", audit_services)
         self.assertIn("notify.notify", audit_services)
@@ -794,7 +794,7 @@ class TestShotoAutomationsAndScripts(unittest.TestCase):
                 self.assertFalse(rendered.endswith(","), f"Trailing comma in rendered push message: {rendered!r}")
                 self.assertEqual(
                     rendered,
-                    "Audit EEPROM read-only PLTS Samoto ILS6300 selesai. "
+                    "Audit EEPROM read-only PLTS Samoto IHF6200 selesai. "
                     "Pack#1=OK(CellOV=3650mV,CellUV=2800mV), Pack#2=OK(CellOV=3650mV,CellUV=2800mV)",
                 )
 

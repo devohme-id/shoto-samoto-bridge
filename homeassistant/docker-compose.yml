@@ -26,7 +26,7 @@ services:
       - /etc/localtime:/etc/localtime:ro
     ports:
       # Default hanya listen di loopback (127.0.0.1) agar akses luar wajib via Caddy HTTPS.
-      # Untuk akses lokal LAN (http://192.168.1.50:8123), isi HA_BIND_IP=192.168.1.50 di `.env`.
+      # Untuk akses lokal LAN (http://192.168.10.250:8123), isi HA_BIND_IP=192.168.10.250 di `.env`.
       # JANGAN PERNAH port-forward port 8123 di router ISP ke internet!
       - "${HA_BIND_IP:-127.0.0.1}:8123:8123"
     depends_on:

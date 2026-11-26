@@ -66,10 +66,10 @@ Sebelum instalasi, siapkan alamat IP tetap di jaringan lokal agar tidak pernah b
 1. Login ke halaman admin router Anda (biasanya `192.168.1.1` atau `192.168.0.1`).
 2. Masuk ke menu **LAN → DHCP Server / Address Reservation / Static Lease**.
 3. Daftarkan MAC Address **Mini PC (port LAN Ethernet)** ke IP tetap, misalnya:
-   - **Mini PC Home Assistant:** `192.168.1.50` *(gunakan IP contoh ini atau sesuaikan subnet router Anda di seluruh panduan)*
+   - **Mini PC Home Assistant:** `192.168.10.250` *(gunakan IP contoh ini atau sesuaikan subnet router Anda di seluruh panduan)*
 4. Setelah ESP32 menyala nanti, daftarkan juga MAC Address Wi-Fi **ESP32 Bridge** ke IP tetap, misalnya:
-   - **ESP32 Bridge #1 (`ILS6300`):** `192.168.1.61`
-   - **ESP32 Bridge #2 (`IHF6200`, jika ada):** `192.168.1.62`
+   - **ESP32 Bridge #1 (`IHF6200`):** DHCP atau IP statis mis. `192.168.10.61`
+   - **ESP32 Bridge #2 (`ILS6300`, jika ditambah nanti):** DHCP atau IP statis mis. `192.168.10.62`
 
 ---
 
@@ -99,7 +99,7 @@ Sambungkan monitor & keyboard ke Mini PC, nyalakan lalu tekan `DEL` / `F2` masuk
 #### 3. Onboarding Awal Home Assistant
 1. Tunggu 3–5 menit hingga Mini PC selesai inisialisasi pertama.
 2. Dari laptop/HP di Wi-Fi rumah yang sama, buka browser ke:
-   `http://192.168.1.50:8123` *(atau `http://homeassistant.local:8123`)*.
+   `http://192.168.10.250:8123` *(atau `http://homeassistant.local:8123`)*.
 3. Buat **Nama, Username, dan Password Admin yang kuat** (kombinasi huruf besar/kecil, angka, simbol — karena nanti bisa diakses dari internet!).
 4. Atur lokasi rumah, zona waktu (`Asia/Jakarta`), dan mata uang (`IDR`).
 5. **Wajib Aktifkan 2FA (Two-Factor Authentication):**
@@ -118,7 +118,7 @@ Gunakan opsi ini **hanya jika** Mini PC sudah menjalankan Ubuntu/Debian untuk ap
    cd /opt/shoto-ha
    docker compose up -d
    ```
-5. Buka `http://192.168.1.50:8123` dan selesaikan onboarding + aktifkan 2FA sama seperti langkah Opsi A.
+5. Buka `http://192.168.10.250:8123` dan selesaikan onboarding + aktifkan 2FA sama seperti langkah Opsi A.
 
 *(Catatan: Pada Opsi B Docker, layanan add-on tidak ada di UI HA karena Mosquitto & Reverse Proxy Caddy sudah langsung berjalan sebagai container di `docker-compose.yml`.)*
 
@@ -154,7 +154,7 @@ Gunakan opsi ini **hanya jika** Mini PC sudah menjalankan Ubuntu/Debian untuk ap
    ```cpp
    #define WIFI_SSID       "NAMA_WIFI_RUMAH_24GHZ"
    #define WIFI_PASS       "PASSWORD_WIFI_ANDA"
-   #define MQTT_HOST       "192.168.1.50"   // IP LAN statis Mini PC
+   #define MQTT_HOST       "192.168.10.250"   // IP LAN statis Mini PC
    #define MQTT_PORT       1883
    #define MQTT_USER       "shoto_bridge"
    #define MQTT_PASS       "PASSWORD_MQTT_YANG_DIBUAT_DI_BAB_4"
@@ -166,9 +166,9 @@ Gunakan opsi ini **hanya jika** Mini PC sudah menjalankan Ubuntu/Debian untuk ap
 Buka [config.h](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/config.h) dan ubah baris konfigurasi HA menjadi:
 ```cpp
 #define ENABLE_HA_MQTT        1
-#define HA_DEVICE_ID          "shoto_ils6300"         // Unik per unit (mis. "shoto_ihf6200" untuk unit lain)
-#define HA_SITE_NAME          "PLTS Samoto ILS6300"   // Nama tampilan di Home Assistant
-#define MQTT_TOPIC_PREFIX     "shoto_bridge/ils6300"
+#define HA_DEVICE_ID          "shoto_ihf6200"         // Unik per unit (mis. `"shoto_ils6300"` saat menambah unit ke-2 nanti)
+#define HA_SITE_NAME          "PLTS Samoto IHF6200"   // Nama tampilan di Home Assistant
+#define MQTT_TOPIC_PREFIX     "shoto_bridge/ihf6200"
 ```
 
 > [!IMPORTANT]
@@ -197,7 +197,7 @@ Pastikan baris berikut muncul tanpa error:
 
 ## Bab 6: Setup Dashboard Lengkap & Function Action Menu
 
-Begitu ESP32 terhubung ke Mosquitto, buka **Settings → Devices & Services → MQTT → Devices → `PLTS Samoto ILS6300`**. Seluruh sensor, parameter EEPROM, dan kontrol sudah terdaftar otomatis!
+Begitu ESP32 terhubung ke Mosquitto, buka **Settings → Devices & Services → MQTT → Devices → `PLTS Samoto IHF6200`**. Seluruh sensor, parameter EEPROM, dan kontrol sudah terdaftar otomatis!
 
 ### Memasang Dashboard 4 Tampilan (*4-View Dashboard*)
 1. Di Home Assistant, buka **Settings → Dashboards → + Add Dashboard → New dashboard from scratch**.
@@ -242,7 +242,7 @@ Begitu ESP32 terhubung ke Mosquitto, buka **Settings → Devices & Services → 
 Meskipun akses dilakukan menuju **IP Publik yang sudah Anda miliki**, sertifikat HTTPS resmi (Let's Encrypt) dan aplikasi resmi **Home Assistant Companion App** membutuhkan nama host/domain yang menunjuk ke IP Publik tersebut:
 1. **Jika Anda sudah punya domain sendiri:** Buat *DNS A Record* (misalnya `plts.domainanda.com` → arahkan ke IP Publik Anda).
 2. **Jika belum punya domain (Gratis via DuckDNS):**
-   - Buka `https://www.duckdns.org` → login → buat subdomain (contoh: `plts-shoto-anda.duckdns.org`) → isi kolom IP dengan **IP Publik** Anda → klik **update ip**.
+   - Buka `https://www.duckdns.org` → login → buat subdomain (contoh: `plts.duckdns.org`) → isi kolom IP dengan **IP Publik** Anda → klik **update ip**.
    - *(Opsional jika IP Publik Anda suatu saat bisa berubah / dinamis)*: Pasang add-on **DuckDNS** di HAOS atau cron di Mini PC agar IP terus diperbarui otomatis. *(Jika IP Publik Anda sudah **Static IP**, Anda tidak perlu updater tambahan; cukup catat domain atau gunakan DuckDNS sebagai alias HTTPS ke Static IP tersebut.)*
 
 > [!NOTE]
@@ -255,9 +255,9 @@ Meskipun akses dilakukan menuju **IP Publik yang sudah Anda miliki**, sertifikat
 2. Klik **Open Web UI** pada Nginx Proxy Manager (login default awal biasanya `admin@example.com` / `changeme`, langsung ganti email & password Anda saat masuk pertama kali!).
 3. Masuk ke **Hosts → Proxy Hosts → Add Proxy Host**:
    - **Tab Details:**
-     - **Domain Names:** `plts-shoto-anda.duckdns.org` *(tekan Enter)*
+     - **Domain Names:** `plts.duckdns.org` *(tekan Enter)*
      - **Scheme:** `http`
-     - **Forward Hostname / IP:** `192.168.1.50` *(IP LAN Mini PC Anda)*
+     - **Forward Hostname / IP:** `192.168.10.250` *(IP LAN Mini PC Anda)*
      - **Forward Port:** `8123`
      - **Websockets Support:** **ON (WAJIB!)**
      - **Block Common Exploits:** **ON**
@@ -273,8 +273,8 @@ Login ke admin router Anda, lalu buka menu **NAT / Port Forwarding / Virtual Ser
 
 | Nama Rule | Protokol | External / WAN Port | Internal / LAN IP (Mini PC) | Internal / LAN Port | Status |
 |---|---|---|---|---|---|
-| `HA-HTTPS` | **TCP** | **`443`** | `192.168.1.50` | **`443`** | **WAJIB AKTIF** |
-| `HA-SSL-Renew` *(opsional)* | TCP | `80` | `192.168.1.50` | `80` | Hanya perlu untuk verifikasi HTTP Let's Encrypt; bisa dimatikan setelah SSL terbit atau bila pakai DNS-01 |
+| `HA-HTTPS` | **TCP** | **`443`** | `192.168.10.250` | **`443`** | **WAJIB AKTIF** |
+| `HA-SSL-Renew` *(opsional)* | TCP | `80` | `192.168.10.250` | `80` | Hanya perlu untuk verifikasi HTTP Let's Encrypt; bisa dimatikan setelah SSL terbit atau bila pakai DNS-01 |
 
 **Daftar Port yang DILARANG di-Forward di Router:**
 - ❌ `8123` (Home Assistant HTTP polos)
@@ -294,7 +294,7 @@ http:
     - ::1
     - 172.30.33.0/24   # Subnet internal Add-on HAOS (termasuk Nginx Proxy Manager)
     - 172.16.0.0/12    # Subnet internal Docker Bridge (jika pakai Opsi B)
-    - 192.168.1.50     # IP LAN Mini PC
+    - 192.168.10.250     # IP LAN Mini PC
   ip_ban_enabled: true
   login_attempts_threshold: 5
 ```
@@ -303,22 +303,22 @@ Setelah menyimpan file: buka **Developer Tools → Check Configuration** (pastik
 
 ### Langkah 7.5 — Setting Aplikasi HP (Home Assistant Companion App)
 Install aplikasi **Home Assistant** dari Play Store / App Store di HP Anda:
-1. Login pertama kali memakai alamat publik `https://plts-shoto-anda.duckdns.org` + username + password + kode **2FA**.
+1. Login pertama kali memakai alamat publik `https://plts.duckdns.org` + username + password + kode **2FA**.
 2. Masuk ke **Settings (di dalam app) → Companion App → pilih Server Anda**:
-   - **Home Assistant URL (External):** `https://plts-shoto-anda.duckdns.org`
-   - **Internal Connection URL:** `http://192.168.1.50:8123`
+   - **Home Assistant URL (External):** `https://plts.duckdns.org`
+   - **Internal Connection URL:** `http://192.168.10.250:8123`
    - **Home Network Wi-Fi SSID:** pilih **nama Wi-Fi rumah Anda**
-3. Hasilnya: saat Anda berada di rumah (terhubung Wi-Fi rumah), aplikasi otomatis memakai jalur lokal kilat `http://192.168.1.50:8123`; begitu keluar rumah menggunakan 4G/5G, aplikasi otomatis berpindah mulus ke jalur **HTTPS IP Publik** Anda!
+3. Hasilnya: saat Anda berada di rumah (terhubung Wi-Fi rumah), aplikasi otomatis memakai jalur lokal kilat `http://192.168.10.250:8123`; begitu keluar rumah menggunakan 4G/5G, aplikasi otomatis berpindah mulus ke jalur **HTTPS IP Publik** Anda!
 
 > [!TIP]
-> **Jika router ISP tidak mendukung Hairpin NAT / NAT Loopback** (akses `https://domain` gagal saat HP sedang memakai Wi-Fi rumah, tetapi berhasil saat memakai 4G/5G): itu normal pada beberapa modem ONT ISP. Solusinya sudah beres otomatis karena Anda telah mengisi **Internal Connection URL** + **Home Network Wi-Fi SSID** di Companion App di atas, dan di laptop saat di rumah cukup buka `http://192.168.1.50:8123`.
+> **Jika router ISP tidak mendukung Hairpin NAT / NAT Loopback** (akses `https://domain` gagal saat HP sedang memakai Wi-Fi rumah, tetapi berhasil saat memakai 4G/5G): itu normal pada beberapa modem ONT ISP. Solusinya sudah beres otomatis karena Anda telah mengisi **Internal Connection URL** + **Home Network Wi-Fi SSID** di Companion App di atas, dan di laptop saat di rumah cukup buka `http://192.168.10.250:8123`.
 
 ---
 
 ## Bab 8: Pengujian End-to-End, Notifikasi HP & Troubleshooting
 
 ### Checklist Verifikasi 10 Poin Sebelum Ditinggal 24/7
-1. [ ] **Akses LAN:** Buka `http://192.168.1.50:8123` dari laptop/HP di rumah → seluruh 4 view dashboard muncul tanpa entitas `unavailable`.
+1. [ ] **Akses LAN:** Buka `http://192.168.10.250:8123` dari laptop/HP di rumah → seluruh 4 view dashboard muncul tanpa entitas `unavailable`.
 2. [ ] **Data Live Akurat:** Bandingkan `Bank V`, `Bank I`, `SOC`, `CVL/DVL/CCL/DCL`, dan tegangan sel `C01..C15` di HA dengan Serial Monitor ESP32 (`diag` / `packs`) → angka sama dan update setiap 3–5 detik.
 3. [ ] **Read-Only EEPROM Muncul Lengkap:** Di tab **Shoto EEPROM Audit**, ke-13 nilai proteksi (`Cell OV/UV`, `Pack OV/UV`, `Const Charge V`) dan ke-43 parameter alarm (`cmd 0x43`) terbaca lengkap.
 4. [ ] **Status Inverter Normal:** `Inverter Mode = PYL_FULL (63H+61H+62H)`, `mtxMiss = 0`, `Bank Valid = YES`, `Inhibit = 0`.
@@ -326,16 +326,16 @@ Install aplikasi **Home Assistant** dari Play Store / App Store di HP Anda:
 6. [ ] **Uji Pengaman Action Menu:** Coba klik **Restart ESP32** saat `Maintenance Unlock = OFF` → harus ditolak dan ESP32 tidak restart.
 7. [ ] **Uji Action Menu Aktif:** Nyalakan `Maintenance Unlock = ON`, klik **Audit EEPROM (All)** → timestamp audit ter-update, lalu biarkan 5 menit dan pastikan `Maintenance Unlock` kembali `OFF` otomatis.
 8. [ ] **Uji Notifikasi HP:** Klik tombol **Test Notifikasi HA** di tab Action Center → notifikasi masuk ke Companion App HP Anda.
-9. [ ] **Uji Akses Jarak Jauh via IP Publik:** Matikan Wi-Fi di HP (pakai jaringan **4G/5G seluler**), buka `https://plts-shoto-anda.duckdns.org` → login + verifikasi **2FA TOTP** → dashboard tampil real-time.
+9. [ ] **Uji Akses Jarak Jauh via IP Publik:** Matikan Wi-Fi di HP (pakai jaringan **4G/5G seluler**), buka `https://plts.duckdns.org` → login + verifikasi **2FA TOTP** → dashboard tampil real-time.
 10. [ ] **Uji Port Tertutup:** Cek dari luar jaringan bahwa hanya port `443` yang terbuka; port `8123`, `1883`, `22` harus **tertutup/filtered**.
 
 ### Tabel Troubleshooting Cepat
 
 | Gejala / Error | Penyebab Paling Umum | Solusi Cepat |
 |---|---|---|
-| Muncul **`400 Bad Request`** saat akses lewat IP Publik / domain | `use_x_forwarded_for` atau IP Nginx Proxy Manager belum terdaftar di `trusted_proxies` | Tambahkan subnet `172.30.33.0/24` (HAOS) / `172.16.0.0/12` (Docker) & `192.168.1.50` di `configuration.yaml` (Langkah 7.4) lalu restart HA. |
+| Muncul **`400 Bad Request`** saat akses lewat IP Publik / domain | `use_x_forwarded_for` atau IP Nginx Proxy Manager belum terdaftar di `trusted_proxies` | Tambahkan subnet `172.30.33.0/24` (HAOS) / `172.16.0.0/12` (Docker) & `192.168.10.250` di `configuration.yaml` (Langkah 7.4) lalu restart HA. |
 | Tidak bisa diakses dari **4G/5G**, padahal IP Publik sudah benar | 1) ISP memakai **CGNAT** (IP di WAN modem `10.x.x.x` / `100.64.x.x` berbeda dengan IP yang tampil di `whatismyipaddress.com`)<br>2) Modem dalam mode *double router* | 1) Hubungi ISP minta *Public IPv4 non-CGNAT*, **atau** gunakan tunnel gratis aman seperti **Cloudflare Tunnel / Tailscale** tanpa port forwarding.<br>2) Cek IP WAN di router harus sama persis dengan IP Publik. |
-| Bisa dibuka dari **4G/5G**, tetapi **gagal dari Wi-Fi rumah** saat memakai alamat HTTPS | Router ISP tidak mendukung *Hairpin NAT / NAT Loopback* | Di rumah selalu buka `http://192.168.1.50:8123` (dan isi *Internal URL* di Companion App sesuai Langkah 7.5). |
+| Bisa dibuka dari **4G/5G**, tetapi **gagal dari Wi-Fi rumah** saat memakai alamat HTTPS | Router ISP tidak mendukung *Hairpin NAT / NAT Loopback* | Di rumah selalu buka `http://192.168.10.250:8123` (dan isi *Internal URL* di Companion App sesuai Langkah 7.5). |
 | Semua sensor Shoto di HA bertuliskan **`Unavailable`** | ESP32 belum terhubung ke Wi-Fi 2.4 GHz atau user/password Mosquitto salah | Cek Serial Monitor ESP32 (`115200 baud`): lihat pesan `[HA MQTT]`. Pastikan SSID Wi-Fi adalah **2.4 GHz** (bukan 5 GHz saja) dan user `shoto_bridge` cocok. |
 | WebSocket error / dashboard di IP Publik muter terus tidak mau load | **WebSockets Support** di Nginx Proxy Manager belum dicentang | Edit Proxy Host di NPM → aktifkan **Websockets Support = ON** → Save. |
 | Terkunci sendiri dari HP saat salah ketik password | Fitur `ip_ban_enabled: true` memblokir IP setelah 5× gagal | Buka `/config/ip_bans.yaml` dari terminal/File Editor di LAN, hapus entri IP terkait, lalu restart Home Assistant. |

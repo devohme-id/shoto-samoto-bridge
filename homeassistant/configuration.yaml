@@ -1,5 +1,5 @@
 # =============================================================================
-# Konfigurasi Referensi Home Assistant — PLTS Samoto ILS6300 & Shoto BMS
+# Konfigurasi Referensi Home Assistant — PLTS Samoto IHF6200 & Shoto BMS
 # =============================================================================
 # Untuk pengguna HAOS (Opsi A): gabungkan blok `http:` dan `recorder:` di bawah
 # ke file `/config/configuration.yaml` melalui add-on File Editor / Studio Code.
@@ -28,7 +28,7 @@ http:
     - "::1"
     - 172.30.33.0/24   # Subnet internal Add-on HAOS (termasuk Nginx Proxy Manager)
     - 172.16.0.0/12    # Subnet internal Docker Bridge (jika pakai Opsi B Docker Compose)
-    - 192.168.1.50     # Ganti dengan IP LAN Mini PC Anda jika berbeda
+    - 192.168.10.250     # Ganti dengan IP LAN Mini PC Anda jika berbeda
   ip_ban_enabled: true
   login_attempts_threshold: 5
 

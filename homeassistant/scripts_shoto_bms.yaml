@@ -1,5 +1,5 @@
 # =============================================================================
-# Script Utilitas Shoto BMS - PLTS Samoto ILS6300
+# Script Utilitas Shoto BMS - PLTS Samoto IHF6200
 # =============================================================================
 # Pasang dengan menyalin daftar script ini ke `scripts.yaml` Home Assistant
 # (atau aktifkan named include di `configuration.yaml`).
@@ -9,34 +9,34 @@ shoto_test_notification:
   alias: "Shoto BMS: Tes Notifikasi & Ringkasan Bank"
   description: >-
     Mengirim notifikasi uji coba ke dashboard Home Assistant dan aplikasi HP
-    (notify.notify) berisi ringkasan status live bank baterai PLTS Samoto ILS6300.
+    (notify.notify) berisi ringkasan status live bank baterai PLTS Samoto IHF6200.
   mode: single
   sequence:
     - service: persistent_notification.create
       data:
         notification_id: shoto_bms_test_notification
-        title: "[TES] PLTS Samoto ILS6300 - Ringkasan Bank Baterai"
+        title: "[TES] PLTS Samoto IHF6200 - Ringkasan Bank Baterai"
         message: >-
-          Site: PLTS Samoto ILS6300.
-          SOC: {{ states('sensor.shoto_ils6300_bank_soc') }} % |
-          Tegangan: {{ states('sensor.shoto_ils6300_bank_voltage') }} V |
-          Arus: {{ states('sensor.shoto_ils6300_bank_current') }} A |
-          Daya: {{ states('sensor.shoto_ils6300_bank_power') }} W |
-          Delta V: {{ states('sensor.shoto_ils6300_bank_cell_dv_mv') }} mV |
-          Pack Online: {{ states('sensor.shoto_ils6300_bank_pack_count') }} / 4 |
-          Mode Inverter: {{ states('sensor.shoto_ils6300_diag_inv_mode') }} |
-          Inhibit: {{ states('sensor.shoto_ils6300_bank_inhibit_reason') }}.
+          Site: PLTS Samoto IHF6200.
+          SOC: {{ states('sensor.shoto_ihf6200_bank_soc') }} % |
+          Tegangan: {{ states('sensor.shoto_ihf6200_bank_voltage') }} V |
+          Arus: {{ states('sensor.shoto_ihf6200_bank_current') }} A |
+          Daya: {{ states('sensor.shoto_ihf6200_bank_power') }} W |
+          Delta V: {{ states('sensor.shoto_ihf6200_bank_cell_dv_mv') }} mV |
+          Pack Online: {{ states('sensor.shoto_ihf6200_bank_pack_count') }} / 4 |
+          Mode Inverter: {{ states('sensor.shoto_ihf6200_diag_inv_mode') }} |
+          Inhibit: {{ states('sensor.shoto_ihf6200_bank_inhibit_reason') }}.
     - service: notify.notify
       continue_on_error: true
       data:
-        title: "[TES] PLTS Samoto ILS6300 - Status Live"
+        title: "[TES] PLTS Samoto IHF6200 - Status Live"
         message: >-
-          PLTS Samoto ILS6300 OK:
-          SOC={{ states('sensor.shoto_ils6300_bank_soc') }}%,
-          V={{ states('sensor.shoto_ils6300_bank_voltage') }}V,
-          I={{ states('sensor.shoto_ils6300_bank_current') }}A,
-          Packs={{ states('sensor.shoto_ils6300_bank_pack_count') }}/4,
-          Inv={{ states('sensor.shoto_ils6300_diag_inv_mode') }}.
+          PLTS Samoto IHF6200 OK:
+          SOC={{ states('sensor.shoto_ihf6200_bank_soc') }}%,
+          V={{ states('sensor.shoto_ihf6200_bank_voltage') }}V,
+          I={{ states('sensor.shoto_ihf6200_bank_current') }}A,
+          Packs={{ states('sensor.shoto_ihf6200_bank_pack_count') }}/4,
+          Inv={{ states('sensor.shoto_ihf6200_diag_inv_mode') }}.
 
 shoto_audit_all_packs_and_notify:
   alias: "Shoto BMS: Audit EEPROM Semua Pack (Read-Only) & Notifikasi"
@@ -48,19 +48,19 @@ shoto_audit_all_packs_and_notify:
   sequence:
     - service: button.press
       target:
-        entity_id: button.shoto_ils6300_btn_audit_eeprom_all
+        entity_id: button.shoto_ihf6200_btn_audit_eeprom_all
     - delay: "00:00:25"
     - service: persistent_notification.create
       data:
         notification_id: shoto_bms_eeprom_audit_summary
-        title: "[AUDIT EEPROM] PLTS Samoto ILS6300 (Read-Only)"
+        title: "[AUDIT EEPROM] PLTS Samoto IHF6200 (Read-Only)"
         message: |
-          Site: PLTS Samoto ILS6300 (100% Read-Only).
+          Site: PLTS Samoto IHF6200 (100% Read-Only).
           {% set packs = [
-            (1, 'binary_sensor.shoto_ils6300_pack1_eep_valid', 'binary_sensor.shoto_ils6300_pack1_online'),
-            (2, 'binary_sensor.shoto_ils6300_pack2_eep_valid', 'binary_sensor.shoto_ils6300_pack2_online'),
-            (3, 'binary_sensor.shoto_ils6300_pack3_eep_valid', 'binary_sensor.shoto_ils6300_pack3_online'),
-            (4, 'binary_sensor.shoto_ils6300_pack4_eep_valid', 'binary_sensor.shoto_ils6300_pack4_online')
+            (1, 'binary_sensor.shoto_ihf6200_pack1_eep_valid', 'binary_sensor.shoto_ihf6200_pack1_online'),
+            (2, 'binary_sensor.shoto_ihf6200_pack2_eep_valid', 'binary_sensor.shoto_ihf6200_pack2_online'),
+            (3, 'binary_sensor.shoto_ihf6200_pack3_eep_valid', 'binary_sensor.shoto_ihf6200_pack3_online'),
+            (4, 'binary_sensor.shoto_ihf6200_pack4_eep_valid', 'binary_sensor.shoto_ihf6200_pack4_online')
           ] %}
           {%- for idx, eid, online_eid in packs -%}
           {%- if state_attr(eid, 'valid') %}
@@ -74,13 +74,13 @@ shoto_audit_all_packs_and_notify:
     - service: notify.notify
       continue_on_error: true
       data:
-        title: "[AUDIT EEPROM] PLTS Samoto ILS6300 Selesai"
+        title: "[AUDIT EEPROM] PLTS Samoto IHF6200 Selesai"
         message: >-
           {% set packs = [
-            (1, 'binary_sensor.shoto_ils6300_pack1_eep_valid', 'binary_sensor.shoto_ils6300_pack1_online'),
-            (2, 'binary_sensor.shoto_ils6300_pack2_eep_valid', 'binary_sensor.shoto_ils6300_pack2_online'),
-            (3, 'binary_sensor.shoto_ils6300_pack3_eep_valid', 'binary_sensor.shoto_ils6300_pack3_online'),
-            (4, 'binary_sensor.shoto_ils6300_pack4_eep_valid', 'binary_sensor.shoto_ils6300_pack4_online')
+            (1, 'binary_sensor.shoto_ihf6200_pack1_eep_valid', 'binary_sensor.shoto_ihf6200_pack1_online'),
+            (2, 'binary_sensor.shoto_ihf6200_pack2_eep_valid', 'binary_sensor.shoto_ihf6200_pack2_online'),
+            (3, 'binary_sensor.shoto_ihf6200_pack3_eep_valid', 'binary_sensor.shoto_ihf6200_pack3_online'),
+            (4, 'binary_sensor.shoto_ihf6200_pack4_eep_valid', 'binary_sensor.shoto_ihf6200_pack4_online')
           ] %}
           {% set ns = namespace(parts=[]) %}
           {% for idx, eid, online_eid in packs %}
@@ -90,4 +90,4 @@ shoto_audit_all_packs_and_notify:
               {% set ns.parts = ns.parts + ['Pack#' ~ idx ~ '=Belum'] %}
             {% endif %}
           {% endfor %}
-          Audit EEPROM read-only PLTS Samoto ILS6300 selesai. {{ ns.parts | join(', ') }}
+          Audit EEPROM read-only PLTS Samoto IHF6200 selesai. {{ ns.parts | join(', ') }}
