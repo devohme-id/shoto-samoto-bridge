@@ -963,8 +963,8 @@ class TestShotoAutomationsAndScripts(unittest.TestCase):
 
 
 class TestWikiAndDiagnosticDocs(unittest.TestCase):
-    WIKI_PATH = REPO_ROOT / "WIKI-SHOTO-SAMOTO.html"
-    GUIDE_HA_PATH = REPO_ROOT / "GUIDE-HOME-ASSISTANT.md"
+    WIKI_PATH = REPO_ROOT / "docs" / "WIKI-SHOTO-SAMOTO.html"
+    GUIDE_HA_PATH = REPO_ROOT / "docs" / "guides" / "GUIDE-HOME-ASSISTANT.md"
 
     def test_guide_ha_contains_52v_error04_case_study(self):
         guide_text = self.GUIDE_HA_PATH.read_text(encoding="utf-8")
@@ -996,6 +996,7 @@ class TestWikiAndDiagnosticDocs(unittest.TestCase):
                 super().__init__()
                 self.article_ids = []
                 self.toc_targets = []
+                self.document_links = []
                 self.in_script = False
                 self.scripts = []
                 self.html_closed = False
@@ -1007,6 +1008,8 @@ class TestWikiAndDiagnosticDocs(unittest.TestCase):
                     self.article_ids.append(attr_map.get("id", ""))
                 if tag == "a" and "toc-link" in cls:
                     self.toc_targets.append(attr_map.get("data-target", ""))
+                if tag == "a" and (href := attr_map.get("href")) and not href.startswith("#"):
+                    self.document_links.append(href)
                 if tag == "script":
                     self.in_script = True
                     self.scripts.append([])
@@ -1029,6 +1032,10 @@ class TestWikiAndDiagnosticDocs(unittest.TestCase):
         self.assertEqual(len(parser.article_ids), 12)
         self.assertEqual(len(set(parser.article_ids)), 12)
         self.assertEqual(parser.toc_targets, parser.article_ids)
+        self.assertIn("../README.md", parser.document_links)
+        for href in parser.document_links:
+            with self.subTest(href=href):
+                self.assertTrue((self.WIKI_PATH.parent / href).exists(), f"Broken Wiki link: {href}")
         self.assertEqual(len(parser.scripts), 1)
         js_code = "".join(parser.scripts[0]).strip()
         self.assertGreater(len(js_code), 500)

@@ -1,6 +1,6 @@
 # Glosarium Lengkap Proyek Bridge Shoto ↔ Samoto
 
-> Kumpulan istilah teknis, kode protokol, singkatan parameter baterai/inverter, serta perintah diagnosa untuk mempermudah pencarian dan pemeliharaan sistem [`shoto_samoto_bridge`](PROJECT_CONTEXT.md).
+> Kumpulan istilah teknis, kode protokol, singkatan parameter baterai/inverter, serta perintah diagnosa untuk mempermudah pencarian dan pemeliharaan sistem [`shoto_samoto_bridge`](../PROJECT_CONTEXT.md).
 
 ---
 
@@ -156,4 +156,4 @@
 | **`raw`** / **`batraw`** | Serial Monitor ESP32 | Toggle tampilan frame hex mentah UART inverter (`raw`) atau RS485 baterai (`batraw`). |
 | **`params`** | Serial Monitor ESP32 | Audit *read-only* parameter EEPROM BMS Shoto (`cmd 0x06..0x50` & `0x43`) tanpa mengubah isi BMS. |
 | **`help`** | Serial Monitor ESP32 | Menampilkan daftar semua perintah CLI ESP32 yang tersedia. |
-| **`serial_lab.py`** (`autodetect`, `probe`, `capture`, `decode`, `esp-log --csv`, `esp-log --params`) | Terminal PC ([`tools/serial_lab.py`](tools/serial_lab.py)) | Utilitas PC untuk mendeteksi protokol Shoto, merekam log Serial ESP32 ke file `.log`, mengekspor data 15 sel ke `.csv`, dan menyimpan hasil audit `params`. |
+| **`serial_lab.py`** (`autodetect`, `probe`, `capture`, `decode`, `esp-log --csv`, `esp-log --params`) | Terminal PC ([`tools/serial_lab.py`](../tools/serial_lab.py)) | Utilitas PC untuk mendeteksi protokol Shoto, merekam log Serial ESP32 ke file `.log`, mengekspor data 15 sel ke `.csv`, dan menyimpan hasil audit `params`. |

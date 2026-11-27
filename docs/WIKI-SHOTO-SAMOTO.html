@@ -531,11 +531,12 @@
     </div>
 
     <!-- 1. ARSITEKTUR -->
-    <article class="wiki-article" id="arsitektur" data-cat="hardware" data-keywords="arsitektur dual-core freertos core 0 core 1 read-only fail-closed esp32 mqtt haos virtualbox">
+    <article class="wiki-article" id="arsitektur" data-cat="hardware" data-keywords="arsitektur dual-core freertos core 0 core 1 read-only fail-closed esp32 mqtt haos virtualbox dokumentasi struktur repositori readme panduan diagram laporan troubleshooting">
       <div class="art-head">
         <h2>1. Arsitektur Sistem &amp; Prinsip Keselamatan</h2>
         <div class="badges"><span class="badge cat">Hardware &amp; Protokol</span><span class="badge">v3.1.0</span></div>
       </div>
+      <p>Buka <a href="../README.md">peta repositori</a> untuk menemukan <a href="guides/GUIDE.md">panduan instalasi</a>, <a href="diagrams/">diagram wiring</a>, dan <a href="reports/ISSUE_REPORT_2026-11-24.md">laporan troubleshooting 3-pack</a>. Lokasi firmware, konfigurasi Home Assistant, dan alat diagnostik tidak berubah.</p>
       <p><strong>Shoto ↔ Samoto Bridge</strong> adalah penerjemah protokol BMS dual-UART berbasis ESP32 FreeRTOS antara bank baterai lithium <strong>Shoto SmartLi / 01-SD-BA430 (15S LFP, 48 V / 100 Ah per pack, tanpa DIP switch)</strong> dan inverter hybrid <strong>Samoto IHF6200 / ILS6300 / ILS3600</strong> memakai protokol <strong>Pylontech LV RS485 (V3.5 &amp; V3.3)</strong>.</p>
       <div class="callout ok">
         <span class="callout-title">3 Pilar Keselamatan Wajib</span>
@@ -901,6 +902,7 @@ script shoto_ils6300: !include scripts_shoto_ils6300.yaml</pre>
         <a class="kw-pill" href="#policy-config"><code>CCL 90 A / DCL 120 A</code> Bank Max Cap</a>
         <a class="kw-pill" href="#policy-config"><code>CVL 53.6 V / DVL 46.0 V</code> 15S LFP</a>
         <a class="kw-pill" href="#cli-troubleshooting"><code>diag</code> Perintah Serial Diagnosa</a>
+        <a class="kw-pill" href="#arsitektur">Dokumentasi &amp; Peta Repositori</a>
         <a class="kw-pill" href="#hardware-wiring"><code>Endloop 120 &Omega;</code> Pin 7&harr;8 Shoto</a>
         <a class="kw-pill" href="#home-assistant"><code>Maintenance Unlock 300s</code> &amp; NVS</a>
         <a class="kw-pill" href="#timing-bridge"><code>mtxMiss</code> Mutex 10 ms Inverter</a>
@@ -918,8 +920,8 @@ script shoto_ils6300: !include scripts_shoto_ils6300.yaml</pre>
 
 <footer class="wiki-footer">
   Wiki offline mandiri proyek <strong>shoto_samoto_bridge</strong> &middot; Sumber teknis sinkron dengan
-  <a href="PROJECT_CONTEXT.md">PROJECT_CONTEXT.md</a>,
-  <a href="GUIDE-HOME-ASSISTANT.md">GUIDE-HOME-ASSISTANT.md</a>, dan
+  <a href="../PROJECT_CONTEXT.md">PROJECT_CONTEXT.md</a>,
+  <a href="guides/GUIDE-HOME-ASSISTANT.md">GUIDE-HOME-ASSISTANT.md</a>, dan
   <a href="GLOSSARY.md">GLOSSARY.md</a>. Tanpa dependensi internet (aman dibuka langsung via <code>file://</code>).
 </footer>
 

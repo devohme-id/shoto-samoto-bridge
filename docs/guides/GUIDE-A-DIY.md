@@ -2,7 +2,7 @@
 
 > **Panduan Induk:** [GUIDE.md](GUIDE.md) · **Versi Siap Print (3 Lembar A4):** [GUIDE-A-DIY-PRINT.pdf](GUIDE-A-DIY-PRINT.pdf) · **Alternatif PCB Terisolasi (Opsi B):** [GUIDE-B-WAVESHARE.md](GUIDE-B-WAVESHARE.md)  
 > **Target Sistem:** Inverter **Samoto IHF6200 / ILS6300 (48 VDC)** ↔ **Module Bridge DIY (`ESP32 DevKit WROOM-32` + `2× XY-K485`)** ↔ **2× Shoto SmartLi `SDA10-48100 / SDA10-48150 / SDA10-4850` (tanpa DIP switch)**  
-> **Status Dokumen:** v3.0 — Diperbarui berdasarkan Reverse Engineering (RE) paket referensi [`reference/2019-07-31  TianBangda LFP MS-ShotoV1.1.exe`](reference/) (`Shoto BMS Modbus V1.2`, `TianBangda Binary .NET`, `YD/T 1363.3 V2.8`), manual Helios V2.2, serta parser Pylontech LV RS485.
+> **Status Dokumen:** v3.0 — Diperbarui berdasarkan Reverse Engineering (RE) paket referensi [`reference/2019-07-31  TianBangda LFP MS-ShotoV1.1.exe`](../../reference/) (`Shoto BMS Modbus V1.2`, `TianBangda Binary .NET`, `YD/T 1363.3 V2.8`), manual Helios V2.2, serta parser Pylontech LV RS485.
 
 ---
 
@@ -83,9 +83,9 @@ Pastikan barang kecil berikut tersedia sebelum masuk Phase A01:
 
 Diagram di bawah menggambarkan 1 rangkaian penuh sistem Anda: Bank Baterai Shoto (`#1` & `#2` + Terminator), Module Bridge DIY (`2× XY-K485` + `ESP32` + `Adaptor 5 V 2 A`), Inverter `Samoto IHF6200 / ILS6300`, Jalur Daya `48 V DC`, serta jalur diagnosa `Autonics SCM-US48I`.
 
-![Diagram Rangkaian Utuh Opsi A — Shoto SmartLi ke Samoto IHF6200/ILS6300](diagrams/diy-xy-k485.png)
+![Diagram Rangkaian Utuh Opsi A — Shoto SmartLi ke Samoto IHF6200/ILS6300](../diagrams/diy-xy-k485.png)
 
-> **File vektor asli:** [`diagrams/diy-xy-k485.svg`](diagrams/diy-xy-k485.svg)
+> **File vektor asli:** [`docs/diagrams/diy-xy-k485.svg`](../diagrams/diy-xy-k485.svg)
 
 ### A01.3 Tabel Koneksi Pin Meja Kerja (Referensi Cepat)
 
@@ -148,9 +148,9 @@ Ikuti langkah berurutan ini saat **semua catu daya dalam keadaan lepas/mati**:
 
 ### A02.1 Diagram Wiring Dua Shoto & Terminator
 
-![Wiring Dua Shoto SmartLi & Terminator 120 Ohm](diagrams/shoto-cascade.png)
+![Wiring Dua Shoto SmartLi & Terminator 120 Ohm](../diagrams/shoto-cascade.png)
 
-> **File vektor asli:** [`diagrams/shoto-cascade.svg`](diagrams/shoto-cascade.svg)
+> **File vektor asli:** [`docs/diagrams/shoto-cascade.svg`](../diagrams/shoto-cascade.svg)
 
 ### A02.2 Langkah 1 — Cocokkan Varian Pinout RJ45 Shoto Anda (Standar Kabel T568B)
 
@@ -176,9 +176,9 @@ Dokumen teknis Shoto menunjukkan **2 varian pinout RJ45 RS485** pada lini SmartL
 
 #### Panduan Visual Kupas Patch Cord Baterai (`XY-K485 #1 ↔ Shoto RS485B`)
 
-![Wiring Realistis Patch Cord XY-K485 #1 ke Shoto RS485B](diagrams/patchcord-xy-k485-shoto.png)
+![Wiring Realistis Patch Cord XY-K485 #1 ke Shoto RS485B](../diagrams/patchcord-xy-k485-shoto.png)
 
-> **File vektor asli:** [`diagrams/patchcord-xy-k485-shoto.svg`](diagrams/patchcord-xy-k485-shoto.svg)
+> **File vektor asli:** [`docs/diagrams/patchcord-xy-k485-shoto.svg`](../diagrams/patchcord-xy-k485-shoto.svg)
 
 1. **Langkah 2 (Kabel Utama Keluar dari Pack `#1`):**  
    Tentukan unit baterai yang paling dekat dengan posisi bridge sebagai **Shoto `#1`**. Colokkan **Patch Cord Cat5e/6 Ujung Kupas** ke port **`RS485B`** pada Shoto `#1`. Ujung kupasnya (`Pin 1 Putih-Oranye` & `Pin 2 Oranye`) **belum dicolok ke `XY-K485 #1`** — di Fase A03 akan dicolok dulu ke `Autonics SCM-US48I`!
@@ -267,7 +267,7 @@ Jangan menebak pinout atau protokol port BMS Samoto — tangkap frame polling as
    - Masuk ke **Setting Menu `05`** (Battery Type) pada panel depan **Samoto `IHF6200 / ILS6300`**.
    - Pilih **`PYL`** *(jika tersedia; atau **`LIB` / `LIC`** sesuai opsi yang ada di menu IHF6200/ILS6300 Anda)*. Inverter mungkin memunculkan **Warning `61`** (BMS communication fault) karena baterai komunikasi belum tersambung — ini **normal**, artinya inverter aktif mencoba melakukan polling RS485!
 3. **Siapkan 1 Kabel Patch Cord Uji untuk Port BMS Samoto:**
-   - Kupas 1 ujung kabel Cat5e/6 sesuai panduan visual realistis di Fase [A06.2](#a062-langkah-2--pasang-kabel-rs485-ke-port-bms-samoto) ([`diagrams/patchcord-xy-k485-samoto.png`](diagrams/patchcord-xy-k485-samoto.png)), biarkan pin lain terisolasi, dan mulai dengan **Kandidat Pinout #1** *(umum pada motherboard OEM inverter tipe Pylontech/Voltronic)*:
+   - Kupas 1 ujung kabel Cat5e/6 sesuai panduan visual realistis di Fase [A06.2](#a062-langkah-2--pasang-kabel-rs485-ke-port-bms-samoto) ([`docs/diagrams/patchcord-xy-k485-samoto.png`](../diagrams/patchcord-xy-k485-samoto.png)), biarkan pin lain terisolasi, dan mulai dengan **Kandidat Pinout #1** *(umum pada motherboard OEM inverter tipe Pylontech/Voltronic)*:
      - **Pin 5 (`Putih-Biru`)** → `SCM-US48I A(+)`
      - **Pin 3 (`Putih-Hijau`)** → `SCM-US48I B(-)`
 4. **Tangkap Lalu Lintas Data selama 30–60 detik** (`capture` bersifat pasif/listen-only):
@@ -301,14 +301,14 @@ python3 tools/serial_lab.py decode data/samoto_capture.log
 
 ## Phase A04 — Firmware ESP32 Siap Pakai & Langkah Flash Mudah
 
-**Tujuan Phase Ini:** Mem-flash firmware bridge siap pakai [`firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino`](firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino) ke `ESP32 DevKit WROOM-32` dan memastikan `XY-K485 #1 BAT` berhasil membaca baterai Shoto secara live via USB Serial Monitor (`MODE_MONITOR_ONLY`).
+**Tujuan Phase Ini:** Mem-flash firmware bridge siap pakai [`firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino`](../../firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino) ke `ESP32 DevKit WROOM-32` dan memastikan `XY-K485 #1 BAT` berhasil membaca baterai Shoto secara live via USB Serial Monitor (`MODE_MONITOR_ONLY`).
 
 > **Struktur Firmware Siap Pakai:**  
-> Folder [`firmware/shoto_samoto_bridge/`](firmware/shoto_samoto_bridge/) sudah dibuat *self-contained* (berisi `.ino`, [`config.h`](firmware/shoto_samoto_bridge/config.h), [`bridge_protocols.hpp`](firmware/shoto_samoto_bridge/bridge_protocols.hpp), [`safety_core.hpp`](firmware/shoto_samoto_bridge/safety_core.hpp), dan [`platformio.ini`](firmware/shoto_samoto_bridge/platformio.ini)) tanpa ketergantungan path luar, sehingga **langsung bisa dibuka & dicompile di Arduino IDE 2.x maupun PlatformIO** dengan nol edit tambahan! *(Di lingkungan kerja ini, seluruh codec & logika fail-safe sudah diverifikasi via `g++ -std=c++17` di `tests/bridge_test.cpp`; proses kompilasi target ESP32 & flashing dilakukan langsung pada PC Anda di langkah berikut).*
+> Folder [`firmware/shoto_samoto_bridge/`](../../firmware/shoto_samoto_bridge/) sudah dibuat *self-contained* (berisi `.ino`, [`config.h`](../../firmware/shoto_samoto_bridge/config.h), [`bridge_protocols.hpp`](../../firmware/shoto_samoto_bridge/bridge_protocols.hpp), [`safety_core.hpp`](../../firmware/shoto_samoto_bridge/safety_core.hpp), dan [`platformio.ini`](../../firmware/shoto_samoto_bridge/platformio.ini)) tanpa ketergantungan path luar, sehingga **langsung bisa dibuka & dicompile di Arduino IDE 2.x maupun PlatformIO** dengan nol edit tambahan! *(Di lingkungan kerja ini, seluruh codec & logika fail-safe sudah diverifikasi via `g++ -std=c++17` di `tests/bridge_test.cpp`; proses kompilasi target ESP32 & flashing dilakukan langsung pada PC Anda di langkah berikut).*
 
-### A04.1 Langkah 1 — Sesuaikan [`firmware/shoto_samoto_bridge/config.h`](firmware/shoto_samoto_bridge/config.h) Berdasarkan Fakta Fase A03
+### A04.1 Langkah 1 — Sesuaikan [`firmware/shoto_samoto_bridge/config.h`](../../firmware/shoto_samoto_bridge/config.h) Berdasarkan Fakta Fase A03
 
-Buka [`firmware/shoto_samoto_bridge/config.h`](firmware/shoto_samoto_bridge/config.h) dan periksa nilai default berikut:
+Buka [`firmware/shoto_samoto_bridge/config.h`](../../firmware/shoto_samoto_bridge/config.h) dan periksa nilai default berikut:
 
 1. **Board Default:** Sudah diset ke `#define BOARD_DIY_XY_K485` (`BAT_TX=17, BAT_RX=16`, `INV_TX=26, INV_RX=27`). **Biarkan seperti ini.**
 2. **Protokol & Baud Baterai (`SHOTO_PROTOCOL`, `SHOTO_BAUD`):**
@@ -327,7 +327,7 @@ Buka [`firmware/shoto_samoto_bridge/config.h`](firmware/shoto_samoto_bridge/conf
 #### Cara A (Termudah untuk Pemula): Arduino IDE 2.x
 
 1. **Install Board Support ESP32:** Buka Arduino IDE 2.x → buka *Boards Manager* (`Ctrl+Shift+B` / `Cmd+Shift+B`) → cari **`esp32` by Espressif Systems** → klik **Install**.
-2. **Buka Project Firmware:** Klik *File → Open...* → pilih [`firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino`](firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino) *(file `.h`/`.hpp` di folder yang sama akan terbuka otomatis sebagai tab).*
+2. **Buka Project Firmware:** Klik *File → Open...* → pilih [`firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino`](../../firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino) *(file `.h`/`.hpp` di folder yang sama akan terbuka otomatis sebagai tab).*
 3. **Pilih Board & Port USB:** Menu *Tools → Board* → pilih **`ESP32 Dev Module`**. Colokkan **ESP32 ke laptop** via kabel USB data (lepas dulu kabel baterai jika masih terpisah), lalu pilih Port COM/tty ESP32 di *Tools → Port*. *(Tidak perlu library eksternal tambahan — semua kode protokol & FreeRTOS sudah bawaan core ESP32!).*
 4. **Klik Upload (`→`):** Tunggu hingga muncul `Done uploading` / `Hard resetting via RTS pin...`. *(Tip: pada sebagian board ESP32 WROOM-32, jika muncul `Connecting........_____`, tahan tombol **`BOOT`** di board ESP32 1–2 detik saat tulisan `Connecting` muncul, lalu lepas).*
 5. **Buka Serial Monitor (`Ctrl+Shift+M` / `Cmd+Shift+M`):** Set baud rate ke **`115200`**, line ending **`Newline`**. Anda akan melihat banner boot bridge dan daftar perintah CLI: `status`, `cells`, `raw`, `scan`, `help`.
@@ -343,9 +343,9 @@ pio device monitor -b 115200
 #### Cara C (Khusus Jika Anda Memilih Memakai Home Assistant / ESPHome Reader)
 
 Apabila fokus Anda juga ingin membaca baterai langsung ke **Home Assistant** lewat Wi-Fi menggunakan YAML ESPHome:
-- Jika hasil **A03** adalah **Shoto BMS Modbus V1.2** (`SDA10-48100`, addr `38`/`39`, `9600` baud): pakai [`firmware/diy-reader-modbus-v12.yaml`](firmware/diy-reader-modbus-v12.yaml).
-- Jika hasil **A03** adalah **SmartLi DC/DC (`0x0000/0x1030`)**: pakai [`firmware/diy-reader.yaml`](firmware/diy-reader.yaml).
-- Salin [`firmware/secrets.example.yaml`](firmware/secrets.example.yaml) ke `firmware/secrets.yaml`, isi Wi-Fi/API key Anda, lalu flash via ESPHome. *(Catatan: untuk sinkronisasi langsung dua arah ke inverter Samoto tanpa bergantung pada Wi-Fi/HA, **Firmware C++ `shoto_samoto_bridge.ino` pada Cara A/B adalah jalur utama yang direkomendasikan**).*
+- Jika hasil **A03** adalah **Shoto BMS Modbus V1.2** (`SDA10-48100`, addr `38`/`39`, `9600` baud): pakai [`firmware/diy-reader-modbus-v12.yaml`](../../firmware/diy-reader-modbus-v12.yaml).
+- Jika hasil **A03** adalah **SmartLi DC/DC (`0x0000/0x1030`)**: pakai [`firmware/diy-reader.yaml`](../../firmware/diy-reader.yaml).
+- Salin [`firmware/secrets.example.yaml`](../../firmware/secrets.example.yaml) ke `firmware/secrets.yaml`, isi Wi-Fi/API key Anda, lalu flash via ESPHome. *(Catatan: untuk sinkronisasi langsung dua arah ke inverter Samoto tanpa bergantung pada Wi-Fi/HA, **Firmware C++ `shoto_samoto_bridge.ino` pada Cara A/B adalah jalur utama yang direkomendasikan**).*
 
 ### A04.3 Langkah 3 — Sambungkan Kabel Baterai ke `XY-K485 #1 BAT` & Uji Pembacaan Live
 
@@ -363,7 +363,7 @@ Apabila fokus Anda juga ingin membaca baterai langsung ke **Home Assistant** lew
    - *(Jika `status` tetap `Proto=AUTO` dan log menampilkan `[SCAN] Belum ada balasan dari Shoto`: lepas USB, tukar kabel `TXD ↔ RXD` antara ESP32 & `XY-K485 #1` atau periksa ulang polaritas `A+/B-` ke baterai, lalu uji lagi).*
 
 **Gate A04 (Ceklis):**
-- [ ] Firmware [`shoto_samoto_bridge.ino`](firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino) berhasil di-upload ke `ESP32 WROOM-32`.
+- [ ] Firmware [`shoto_samoto_bridge.ino`](../../firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino) berhasil di-upload ke `ESP32 WROOM-32`.
 - [ ] Perintah `status` dan `cells` di Serial Monitor `115200` menampilkan protokol aktif, tegangan pack/sel (mV), serta `SOC/SOH` Shoto yang akurat.
 - [ ] `XY-K485 #2 INV` masih belum terhubung ke Samoto dan `BRIDGE_MODE` masih `MODE_MONITOR_ONLY`.
 
@@ -398,9 +398,9 @@ Ikuti **4 Langkah Uji Multimeter** ini secara berurutan:
 
 **Tujuan Phase Ini:** Menghubungkan `XY-K485 #2 INV` ke port BMS Samoto sesuai hasil Fase A03, mengaktifkan mode bridge aktif (`MODE_BRIDGE_ACTIVE` + `POLICY_USER_APPROVED`), dan memverifikasi parameter baterai tersinkron di LCD Samoto.
 
-### A06.1 Langkah 1 — Aktifkan Mode Bridge di [`config.h`](firmware/shoto_samoto_bridge/config.h) & Upload Ulang
+### A06.1 Langkah 1 — Aktifkan Mode Bridge di [`config.h`](../../firmware/shoto_samoto_bridge/config.h) & Upload Ulang
 
-1. Buka [`firmware/shoto_samoto_bridge/config.h`](firmware/shoto_samoto_bridge/config.h) dan ubah **2 baris** berikut:
+1. Buka [`firmware/shoto_samoto_bridge/config.h`](../../firmware/shoto_samoto_bridge/config.h) dan ubah **2 baris** berikut:
    ```cpp
    #define BRIDGE_MODE           MODE_BRIDGE_ACTIVE   // dari MODE_MONITOR_ONLY
    #define POLICY_USER_APPROVED  true                 // dari false
@@ -410,9 +410,9 @@ Ikuti **4 Langkah Uji Multimeter** ini secara berurutan:
 
 ### A06.2 Langkah 2 — Pasang Kabel RS485 ke Port BMS Samoto
 
-![Wiring Realistis Patch Cord XY-K485 #2 ke Port BMS Samoto](diagrams/patchcord-xy-k485-samoto.png)
+![Wiring Realistis Patch Cord XY-K485 #2 ke Port BMS Samoto](../diagrams/patchcord-xy-k485-samoto.png)
 
-> **File vektor asli:** [`diagrams/patchcord-xy-k485-samoto.svg`](diagrams/patchcord-xy-k485-samoto.svg)
+> **File vektor asli:** [`docs/diagrams/patchcord-xy-k485-samoto.svg`](../diagrams/patchcord-xy-k485-samoto.svg)
 
 1. Matikan sementara beban output AC Samoto (atau ikuti prosedur aman penyambungan BMS Samoto).
 2. Sambungkan ujung kupas Patch Cord Port BMS Samoto yang sudah **terbukti pinout-nya di Fase A03** ke terminal sekrup **`XY-K485 #2 (INV)`**:
@@ -452,9 +452,9 @@ Ikuti **4 Langkah Uji Multimeter** ini secara berurutan:
 
 - **Jalur Rekomendasi (Teraman):** Gunakan `ESP32` utama **khusus** untuk menjalankan `shoto_samoto_bridge.ino` (`A04–A06`), karena komunikasi inverter Samoto bersifat kritis dan tidak boleh terdampak restart Wi-Fi / OTA Home Assistant.
 - Apabila Anda hanya butuh monitoring Home Assistant untuk sementara (atau memakai ESP32 terpisah sebagai logger pasif), gunakan template siap pakai:
-  - [`firmware/diy-reader-modbus-v12.yaml`](firmware/diy-reader-modbus-v12.yaml) untuk baterai `Shoto Modbus V1.2` (`SDA10-48100`, addr `38`/`39`).
-  - [`firmware/diy-reader.yaml`](firmware/diy-reader.yaml) untuk varian `SmartLi DC/DC`.
-  - Lihat panduan pin [`firmware/secrets.example.yaml`](firmware/secrets.example.yaml) saat mengisi `secrets.yaml`.
+  - [`firmware/diy-reader-modbus-v12.yaml`](../../firmware/diy-reader-modbus-v12.yaml) untuk baterai `Shoto Modbus V1.2` (`SDA10-48100`, addr `38`/`39`).
+  - [`firmware/diy-reader.yaml`](../../firmware/diy-reader.yaml) untuk varian `SmartLi DC/DC`.
+  - Lihat panduan pin [`firmware/secrets.example.yaml`](../../firmware/secrets.example.yaml) saat mengisi `secrets.yaml`.
 
 **Gate A07 (Ceklis):**
 - [ ] (Opsional) Jika memakai Home Assistant, fungsi bridge inverter tetap terisolasi dan stabil tanpa gangguan Wi-Fi.

@@ -1,5 +1,7 @@
 # Panduan Lengkap Step-by-Step: Integrasi BMS Shoto <-> Samoto ke Home Assistant (Mini PC + LAN + IP Publik)
 
+[Peta repositori](../../README.md) · [Panduan hardware](GUIDE.md) · [Wiki offline](../WIKI-SHOTO-SAMOTO.html)
+
 Panduan ini menjelaskan langkah demi langkah dari nol sampai sistem siap dipantau dan dikontrol 24/7 melalui **Home Assistant** di **Mini PC** — baik saat Anda berada di rumah (**jaringan lokal/LAN**) maupun dari luar kota (**jarak jauh via IP Publik** menggunakan *port forwarding* router yang aman).
 
 > [!IMPORTANT]
@@ -56,7 +58,7 @@ flowchart LR
 ### Checklist Persiapan
 - [ ] **Mini PC x86_64** (Intel N100/Celeron/i3/i5 atau Ryzen, minimal RAM `4 GB`, SSD `32 GB+`, **wajib terhubung ke router via kabel LAN RJ45** agar stabil 24/7).
 - [ ] **Flashdisk USB minimal `8 GB`** + laptop/PC untuk membuat installer Home Assistant.
-- [ ] **ESP32 Bridge** yang sudah terpasang kabel RS485 ke baterai Shoto & inverter Samoto (mengacu [wiring diagram aktual](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/diagrams/diy-xy-k485.png)), dalam jangkauan sinyal **Wi-Fi 2.4 GHz** yang stabil.
+- [ ] **ESP32 Bridge** yang sudah terpasang kabel RS485 ke baterai Shoto & inverter Samoto (mengacu [wiring diagram aktual](../diagrams/diy-xy-k485.png)), dalam jangkauan sinyal **Wi-Fi 2.4 GHz** yang stabil.
 - [ ] **IP Publik aktif dari ISP** + login admin Router ISP (Mikrotik / Huawei ONT / ZTE / TP-Link).
 - [ ] *(Sangat Disarankan)* Nama **domain / subdomain** atau akun gratis **DuckDNS** (`namapltssaya.duckdns.org`) yang diarahkan ke IP Publik agar sertifikat HTTPS (gembok hijau browser) terbit otomatis dan aplikasi HP Android/iOS berfungsi tanpa error sertifikat.
 
@@ -111,7 +113,7 @@ Sambungkan monitor & keyboard ke Mini PC, nyalakan lalu tekan `DEL` / `F2` masuk
 Gunakan opsi ini **hanya jika** Mini PC sudah menjalankan Ubuntu/Debian untuk aplikasi lain:
 
 1. Pastikan Docker Engine & Docker Compose plugin sudah terpasang di Mini PC.
-2. Salin direktori konfigurasi [homeassistant/](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/homeassistant/docker-compose.yml) dari repo ini ke `/opt/shoto-ha/` di Mini PC.
+2. Salin direktori konfigurasi [homeassistant/](../../homeassistant/docker-compose.yml) dari repo ini ke `/opt/shoto-ha/` di Mini PC.
 3. Salin `/opt/shoto-ha/.env.example` menjadi `/opt/shoto-ha/.env` lalu sesuaikan password/domain.
 4. Jalankan stack:
    ```bash
@@ -149,7 +151,7 @@ Gunakan opsi ini **hanya jika** Mini PC sudah menjalankan Ubuntu/Debian untuk ap
 ## Bab 5: Konfigurasi & Flash Firmware ESP32 Bridge (Mode Home Assistant)
 
 ### 1. Siapkan Kredensial Wi-Fi & MQTT (`secrets.h`)
-1. Masuk ke folder firmware [firmware/shoto_samoto_bridge/](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino).
+1. Masuk ke folder firmware [firmware/shoto_samoto_bridge/](../../firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino).
 2. Salin berkas contoh `secrets.h.example` menjadi `secrets.h`:
    ```cpp
    #define WIFI_SSID       "NAMA_WIFI_RUMAH_24GHZ"
@@ -163,7 +165,7 @@ Gunakan opsi ini **hanya jika** Mini PC sudah menjalankan Ubuntu/Debian untuk ap
    *(File `secrets.h` otomatis diabaikan oleh `.gitignore` sehingga kredensial Wi-Fi/MQTT Anda tidak akan ikut ter-upload ke Git.)*
 
 ### 2. Aktifkan Profil Unit & Mode Home Assistant di `config.h`
-Buka [config.h](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/config.h). Cukup pilih **profil unit inverter** sebelum klik Upload:
+Buka [config.h](../../firmware/shoto_samoto_bridge/config.h). Cukup pilih **profil unit inverter** sebelum klik Upload:
 
 - **Untuk ESP32 #1 — Samoto IHF6200 (default aktif, 3-pack):** biarkan default apa adanya (`SITE_PROFILE_IHF6200` aktif):
   ```cpp
@@ -191,7 +193,7 @@ Buka [config.h](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware
 ### 3. Install Library & Flash Firmware
 - **Jika memakai Arduino IDE 2.x:**
   1. Buka **Library Manager** (`Ctrl+Shift+I` / `Cmd+Shift+I`), cari **`PubSubClient`** by Nick O'Leary → **Install**.
-  2. Buka [shoto_samoto_bridge.ino](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino).
+  2. Buka [shoto_samoto_bridge.ino](../../firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino).
   3. Untuk ESP32 #1 (`IHF6200`) biarkan `config.h` default; untuk ESP32 #2 (`ILS6300`) uncomment `#define SITE_PROFILE_ILS6300`.
   4. Pilih Board `ESP32 Dev Module` *(atau `ESP32S3 Dev Module` jika pakai Waveshare S3)* dan Port USB ESP32 → klik **Upload**.
 - **Jika memakai PlatformIO (tidak perlu edit `config.h`):**
@@ -228,22 +230,22 @@ Agar monitoring **IHF6200** dan **ILS6300** terpisah rapi di menu sidebar Home A
    - Buka **Settings → Dashboards → + Add Dashboard → New dashboard from scratch**.
    - Isi **Title:** `PLTS IHF6200`, **Icon:** `mdi:battery-charging-high`, URL slug (mis. `shoto-ihf6200`), centang **Show in sidebar** → **Create**.
    - Buka dashboard `PLTS IHF6200` → klik ikon **Pensil (Edit)** di pojok kanan atas → klik ikon **titik tiga (`⋮`)** → **Raw configuration editor**.
-   - Hapus isi default, salin seluruh isi [shoto_bms_dashboard.yaml](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/homeassistant/dashboards/shoto_bms_dashboard.yaml) → tempelkan → klik **Save** → **Done**.
+   - Hapus isi default, salin seluruh isi [shoto_bms_dashboard.yaml](../../homeassistant/dashboards/shoto_bms_dashboard.yaml) → tempelkan → klik **Save** → **Done**.
 
 2. **Buat Dashboard #2 — Inverter `ILS6300`:**
    - Ulangi **Settings → Dashboards → + Add Dashboard → New dashboard from scratch**.
    - Isi **Title:** `PLTS ILS6300`, **Icon:** `mdi:solar-power`, URL slug (mis. `shoto-ils6300`), centang **Show in sidebar** → **Create**.
    - Buka dashboard `PLTS ILS6300` → ikon **Pensil (Edit)** → **titik tiga (`⋮`)** → **Raw configuration editor**.
-   - Salin seluruh isi [shoto_ils6300_dashboard.yaml](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/homeassistant/dashboards/shoto_ils6300_dashboard.yaml) → tempelkan → klik **Save** → **Done**.
+   - Salin seluruh isi [shoto_ils6300_dashboard.yaml](../../homeassistant/dashboards/shoto_ils6300_dashboard.yaml) → tempelkan → klik **Save** → **Done**.
 
 3. **Pasang Otomasi & Script Kedua Inverter Secara Bersamaan (Tanpa Bentrok):**
    Seluruh ID otomasi, alias, `notification_id`, dan nama script antara IHF6200 dan ILS6300 sudah dipisah total:
    - **Cara cepat lewat File Editor / Studio Code di `/config/`:**
      Salin 4 file berikut dari folder `homeassistant/` ke `/config/` di Home Assistant:
-     - [automations_shoto_bms.yaml](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/homeassistant/automations_shoto_bms.yaml) *(IHF6200)*
-     - [automations_shoto_ils6300.yaml](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/homeassistant/automations_shoto_ils6300.yaml) *(ILS6300)*
-     - [scripts_shoto_bms.yaml](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/homeassistant/scripts_shoto_bms.yaml) *(IHF6200)*
-     - [scripts_shoto_ils6300.yaml](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/homeassistant/scripts_shoto_ils6300.yaml) *(ILS6300)*
+     - [automations_shoto_bms.yaml](../../homeassistant/automations_shoto_bms.yaml) *(IHF6200)*
+     - [automations_shoto_ils6300.yaml](../../homeassistant/automations_shoto_ils6300.yaml) *(ILS6300)*
+     - [scripts_shoto_bms.yaml](../../homeassistant/scripts_shoto_bms.yaml) *(IHF6200)*
+     - [scripts_shoto_ils6300.yaml](../../homeassistant/scripts_shoto_ils6300.yaml) *(ILS6300)*
      Lalu tambahkan baris *named include* ini di `/config/configuration.yaml`:
      ```yaml
      automation shoto_ihf6200: !include automations_shoto_bms.yaml
@@ -331,7 +333,7 @@ Login ke admin router Anda, lalu buka menu **NAT / Port Forwarding / Virtual Ser
 - ❌ `3232` (ESP32 OTA)
 
 ### Langkah 7.4 — Konfigurasi Keamanan `configuration.yaml` di Home Assistant
-Agar Home Assistant menerima koneksi dari Nginx Proxy Manager sekaligus memblokir *brute-force login* dari internet, tambahkan blok berikut ke `/config/configuration.yaml` di Mini PC (lihat juga referensi lengkap di [homeassistant/configuration.yaml](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/homeassistant/configuration.yaml)):
+Agar Home Assistant menerima koneksi dari Nginx Proxy Manager sekaligus memblokir *brute-force login* dari internet, tambahkan blok berikut ke `/config/configuration.yaml` di Mini PC (lihat juga referensi lengkap di [homeassistant/configuration.yaml](../../homeassistant/configuration.yaml)):
 
 ```yaml
 http:
@@ -418,12 +420,12 @@ Catat atau screenshot **6 kelompok nilai berikut** dari **View 4: *Action Center
 > **Kecocokan 1:1 dengan Jalur Kode Firmware Bridge:** Kombinasi **`52.1 V` + `0%` + `charge 0 A` + `Error 04`** cocok persis dengan salah satu dari **2 kondisi** berikut:
 >
 > 1. **Kondisi A — Firmware ESP32 masuk `INHIBIT` (`bank.core.valid == false`)**
->    Di [`bridge_protocols.hpp`](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/bridge_protocols.hpp#L1250-L1270), saat `INHIBIT` aktif, bridge **tetap membalas** inverter dengan:
+>    Di [`bridge_protocols.hpp`](../../firmware/shoto_samoto_bridge/bridge_protocols.hpp#L1250-L1270), saat `INHIBIT` aktif, bridge **tetap membalas** inverter dengan:
 >    - **`61H`:** tegangan asli (**`52.1 V`**), tetapi **`SOC = 0%`** dan arus **`0 A`**.
 >    - **`63H`:** **`CCL = 0 A`**, **`DCL = 0 A`**, **`Allow Charge = No`**, **`Allow Discharge = No` (`0x00`)** → membuat `battery charge current = 0 A`.
 >    - **`62H`:** bit **`System Fault`** ON.
 >    - **Perhatikan tegangan `52.1 V` (zona puncak LFP 15S):** di zona ini ada **3 pemicu `INHIBIT` paling mungkin**:
->      - **`INHIBIT_CRITICAL`** — ada 1 sel melonjak **`>= 3750 mV`** saat charging ([`bridge_protocols.hpp`](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/bridge_protocols.hpp#L456-L463)).
+>      - **`INHIBIT_CRITICAL`** — ada 1 sel melonjak **`>= 3750 mV`** saat charging ([`bridge_protocols.hpp`](../../firmware/shoto_samoto_bridge/bridge_protocols.hpp#L456-L463)).
 >      - **`INHIBIT_DELTA_V`** — selisih tegangan antar 3 pack **`> 1,0 V`** (misalnya 1 pack lebih dulu penuh / cut-off MOSFET charge).
 >      - **`INHIBIT_STALE`** — salah satu pack gagal dibaca **`> 9000 ms`**.
 > 2. **Kondisi B — Komunikasi RS485 Inverter ↔ ESP32 terputus / timeout (`BMS Communication Normal = No`)**
@@ -443,10 +445,10 @@ Catat atau screenshot **6 kelompok nilai berikut** dari **View 4: *Action Center
 >    - *(Catatan sekunder: tampak juga 1× restart singkat ESP32 pukul `02:38–02:39 AM` dan reconnect MQTT 10 detik pukul `09:29:00–09:29:10 AM`.)*
 > 3. **Mengapa hanya 3 detik bisa bikin inverter Error 04 & pindah ke PLN?** Secara fisika sel LFP `100 Ah` tidak mungkin drop `1 V` selama 3 detik saja — ini 100% **glitch bacaan AFE/balancing 1-frame internal Shoto** (`Cell UV Alarm Delay` EEPROM Shoto sendiri `3000 ms`, `Cell UV Prot = 2000 mV`). Firmware ESP32 sudah memiliki `1×` re-poll konfirmasi (*anti-glitch*) untuk `INHIBIT_DELTA_V`, **tetapi belum untuk `INHIBIT_CRITICAL`** sehingga 1 frame glitch langsung mengirim `SOC = 0%` + `0 A` → inverter Error `04` dan *latch* di PLN.
 > 4. **Perbaikan Firmware 2-Lapis (Sudah Diterapkan & Terverifikasi):**
->    - **Anti-Glitch `1×` Re-Poll Konfirmasi ([`shoto_samoto_bridge.ino`](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino)):** setiap kali `pack_needs_prot_recheck()` mendeteksi `prot_flags != 0`, `critical`, atau penolakan charge/discharge, ESP32 menunggu `150 ms` lalu mem-poll ulang **hanya slot pack tersebut** sebelum mengirim status ke `g_bank`/inverter, disertai counter **`protRetry=OK/FAIL`** di Serial CLI `status`/`diag`.
->    - ***Directional OV/UV Protection* ([`bridge_protocols.hpp`](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/bridge_protocols.hpp#L456-L471)):** jika gangguan tetap ada setelah konfirmasi, OV (`>= 3650/3750 mV` sel atau `>= 56.5 V` pack) memblokir **Charge saja** (`CCL = 0 A`, `63H = 0x40`, tetap `Allow Discharge = Yes` & SOC asli tanpa `Error 04`); UV (`<= 2550 mV` sel atau `<= 40.5 V` pack) memblokir **Discharge saja** (`DCL = 0 A`, `63H = 0x80`, tetap `Allow Charge = Yes` agar bisa langsung charge). Termal ekstrem (`OT >= 65 °C` / `UT <= -10 °C`) & konflik OV+UV tetap `INHIBIT_CRITICAL` penuh. *(Re-flash ESP32 agar aktif live.)*
+>    - **Anti-Glitch `1×` Re-Poll Konfirmasi ([`shoto_samoto_bridge.ino`](../../firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino)):** setiap kali `pack_needs_prot_recheck()` mendeteksi `prot_flags != 0`, `critical`, atau penolakan charge/discharge, ESP32 menunggu `150 ms` lalu mem-poll ulang **hanya slot pack tersebut** sebelum mengirim status ke `g_bank`/inverter, disertai counter **`protRetry=OK/FAIL`** di Serial CLI `status`/`diag`.
+>    - ***Directional OV/UV Protection* ([`bridge_protocols.hpp`](../../firmware/shoto_samoto_bridge/bridge_protocols.hpp#L456-L471)):** jika gangguan tetap ada setelah konfirmasi, OV (`>= 3650/3750 mV` sel atau `>= 56.5 V` pack) memblokir **Charge saja** (`CCL = 0 A`, `63H = 0x40`, tetap `Allow Discharge = Yes` & SOC asli tanpa `Error 04`); UV (`<= 2550 mV` sel atau `<= 40.5 V` pack) memblokir **Discharge saja** (`DCL = 0 A`, `63H = 0x80`, tetap `Allow Charge = Yes` agar bisa langsung charge). Termal ekstrem (`OT >= 65 °C` / `UT <= -10 °C`) & konflik OV+UV tetap `INHIBIT_CRITICAL` penuh. *(Re-flash ESP32 agar aktif live.)*
 >
-> **Dekoder 6 Pemicu `CRITICAL` dari Histori `Bank Prot Flags` ([`bridge_protocols.hpp`](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/bridge_protocols.hpp#L456-L463)):**
+> **Dekoder 6 Pemicu `CRITICAL` dari Histori `Bank Prot Flags` ([`bridge_protocols.hpp`](../../firmware/shoto_samoto_bridge/bridge_protocols.hpp#L456-L463)):**
 >
 > | Nilai Desimal `Prot Flags` | Bit Hex | Arti Pemicu `INHIBIT_CRITICAL` |
 > |---|---|---|

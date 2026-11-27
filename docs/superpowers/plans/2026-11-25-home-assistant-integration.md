@@ -5,7 +5,7 @@
 **Goal:** Mengintegrasikan seluruh parameter live (bank, per-pack, 15 sel/pack, suhu, proteksi/alarm, status komunikasi inverter `60H–63H`) dan seluruh parameter EEPROM *read-only* BMS Shoto (`13` register proteksi `cmd 0x06..0x50` + seluruh `43` tag alarm `cmd 0x43`) dari ESP32 Bridge ke Home Assistant pada Mini PC melalui MQTT Auto-Discovery lengkap dengan *Function Action Menu* aman, serta menyediakan akses jaringan lokal (LAN) dan jarak jauh via IP Publik (router port forwarding + HTTPS reverse proxy).
 
 **Architecture:** Sistem dibagi menjadi tiga lapisan terisolasi:
-1. **Lapisan ESP32 Bridge ([shoto_samoto_bridge.ino](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino) + `ha_mqtt_codec.hpp`):** Tugas real-time `bat_poll_task` (Core 0, priority `2`) dan `inv_bridge_task` (Core 1, priority `3`) tetap berjalan independen tanpa ketergantungan jaringan. Tugas baru non-blocking `ha_mqtt_task` (Core 0, priority `1`, stack `8192 B`) hanya menyalin snapshot dari `g_snap_mutex` dalam `< 1 ms`, menerbitkan MQTT Auto-Discovery dan JSON state ke Mosquitto lokal dengan LWT availability, serta mengeksekusi perintah aksi tervalidasi dan tersimpan di NVS (`Preferences`).
+1. **Lapisan ESP32 Bridge ([shoto_samoto_bridge.ino](../../../firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino) + `ha_mqtt_codec.hpp`):** Tugas real-time `bat_poll_task` (Core 0, priority `2`) dan `inv_bridge_task` (Core 1, priority `3`) tetap berjalan independen tanpa ketergantungan jaringan. Tugas baru non-blocking `ha_mqtt_task` (Core 0, priority `1`, stack `8192 B`) hanya menyalin snapshot dari `g_snap_mutex` dalam `< 1 ms`, menerbitkan MQTT Auto-Discovery dan JSON state ke Mosquitto lokal dengan LWT availability, serta mengeksekusi perintah aksi tervalidasi dan tersimpan di NVS (`Preferences`).
 2. **Lapisan Server Mini PC:** Menjalankan **Home Assistant OS (HAOS)** bare-metal (opsi utama) atau Docker Compose, **Eclipse Mosquitto MQTT Broker** (hanya LAN port `1883`, autentikasi wajib), dashboard Lovelace 4 tampilan (*Overview*, *Packs & 15-Cell Matrix*, *Shoto EEPROM Audit*, *Action Center & Diagnostics*), otomasi notifikasi instan, dan timer backup *auto-relock*.
 3. **Lapisan Akses Jarak Jauh & Keamanan:** Router hanya meneruskan WAN TCP `443` menuju Reverse Proxy di Mini PC (**Nginx Proxy Manager** atau **Caddy**) dengan enkripsi TLS/HTTPS + dukungan WebSocket (`/api/websocket`), `use_x_forwarded_for: true`, `trusted_proxies`, `ip_ban_enabled: true`, dan 2FA TOTP wajib. Port internal `8123`, `1883`, `22`, dan OTA ESP32 tidak pernah diekspos ke internet.
 
@@ -53,9 +53,9 @@ flowchart LR
     end
 ```
 
-**Tech Stack:** C++17 ([bridge_protocols.hpp](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/bridge_protocols.hpp), `ha_mqtt_codec.hpp`), ESP32 Arduino/FreeRTOS (`WiFi`, `PubSubClient`, `Preferences`, `ArduinoOTA`), host unit tests (`g++ -std=gnu++17 -Wall -Wextra -Werror` & `gnu++11`, `python3 -m unittest`), Home Assistant OS / Docker Compose, Eclipse Mosquitto, Nginx Proxy Manager / Caddy + Let's Encrypt, Lovelace YAML.
+**Tech Stack:** C++17 ([bridge_protocols.hpp](../../../firmware/shoto_samoto_bridge/bridge_protocols.hpp), `ha_mqtt_codec.hpp`), ESP32 Arduino/FreeRTOS (`WiFi`, `PubSubClient`, `Preferences`, `ArduinoOTA`), host unit tests (`g++ -std=gnu++17 -Wall -Wextra -Werror` & `gnu++11`, `python3 -m unittest`), Home Assistant OS / Docker Compose, Eclipse Mosquitto, Nginx Proxy Manager / Caddy + Let's Encrypt, Lovelace YAML.
 
-**Spec:** Diturunkan dari spesifikasi terverifikasi lapangan pada [PROJECT_CONTEXT.md](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/PROJECT_CONTEXT.md), [config.h](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/config.h), [bridge_protocols.hpp](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/bridge_protocols.hpp), [shoto_samoto_bridge.ino](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino), serta hasil readout live `ILS6300 + 2× Shoto` (`2026-11-24`).
+**Spec:** Diturunkan dari spesifikasi terverifikasi lapangan pada [PROJECT_CONTEXT.md](../../../PROJECT_CONTEXT.md), [config.h](../../../firmware/shoto_samoto_bridge/config.h), [bridge_protocols.hpp](../../../firmware/shoto_samoto_bridge/bridge_protocols.hpp), [shoto_samoto_bridge.ino](../../../firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino), serta hasil readout live `ILS6300 + 2× Shoto` (`2026-11-24`).
 
 ## Global Constraints
 
@@ -84,7 +84,7 @@ flowchart LR
 - Test: `tests/bridge_test.cpp:730-808`
 
 **Interfaces:**
-- Consumes: `parse_tbd_param_u16()`, `parse_tbd_alarm_params_43()`, `TbdAlarmParams` ([bridge_protocols.hpp](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/bridge_protocols.hpp#L568-L650)).
+- Consumes: `parse_tbd_param_u16()`, `parse_tbd_alarm_params_43()`, `TbdAlarmParams` ([bridge_protocols.hpp](../../../firmware/shoto_samoto_bridge/bridge_protocols.hpp#L568-L650)).
 - Produces:
   - `struct TbdProtParams` (semua 13 register `cmd 0x06..0x50`: `cell_ov_prot_mv`, `cell_ov_rec_mv`, `cell_uv_prot_mv`, `cell_uv_rec_mv`, `pack_ov_prot_cv`, `pack_ov_rec_cv`, `pack_uv_prot_cv`, `pack_uv_rec_cv`, `const_chg_cv`, `const_chg_ci`, `cell_sleep_mv`, `uv_off_interval`, `sleep_time_min`, `valid`, `audited_ms`).
   - Expanded `struct TbdAlarmParams` mencakup **seluruh 43 tag `0x00..0x2A`** (termasuk `cell_ov_delay_ms`, `cell_uv_delay_ms`, `pack_ov_delay_ms`, `pack_uv_delay_ms`, `chg_oc_ca` / `chg_oc_delay_ms` / `chg_oc_rec_ca`, `dsg_oc_ca` / `dsg_oc_delay_ms` / `dsg_oc_rec_ca`, `chg_ot_c` / `chg_ot_delay_ms` / `chg_ot_rec_c`, `chg_ut_c` / `chg_ut_delay_ms` / `chg_ut_rec_c`, `dsg_ot_c` / `dsg_ot_delay_ms` / `dsg_ot_rec_c`, `dsg_ut_c` / `dsg_ut_delay_ms` / `dsg_ut_rec_c`, `mos_ot_c` / `mos_ot_delay_ms` / `mos_ot_rec_c`, `env_ot_c` / `env_ot_delay_ms` / `env_ot_rec_c`, `env_ut_c` / `env_ut_delay_ms` / `env_ut_rec_c`).
@@ -167,7 +167,7 @@ git commit -m "feat: decode all 43 Shoto EEPROM alarm tags and pack snapshot"
 - Test: `tests/ha_mqtt_test.cpp`
 
 **Interfaces:**
-- Consumes: `BankExt`, `PackState`, `PackEepromSnapshot`, `InhibitReason`, `ShotoProtoKind` ([bridge_protocols.hpp](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/bridge_protocols.hpp)).
+- Consumes: `BankExt`, `PackState`, `PackEepromSnapshot`, `InhibitReason`, `ShotoProtoKind` ([bridge_protocols.hpp](../../../firmware/shoto_samoto_bridge/bridge_protocols.hpp)).
 - Produces (`firmware/shoto_samoto_bridge/ha_mqtt_codec.hpp`, pure C++17 tanpa header Arduino):
   - `static constexpr size_t HA_MQTT_MAX_PAYLOAD = 1400u;`
   - `struct RuntimePolicyOverride { float cvl_v; float dvl_v; float ccl_max_a; float dcl_max_a; float max_delta_v; bool modified; };`
@@ -231,7 +231,7 @@ git commit -m "feat: add portable HA MQTT discovery, JSON telemetry codec, and a
 **Interfaces:**
 - Consumes: `PackEepromSnapshot` (Task 1), seluruh fungsi `ha_mqtt_codec.hpp` (Task 2).
 - Produces:
-  - Config guard `#define ENABLE_HA_MQTT 0` (set `1` untuk mode HA), `HA_DEVICE_ID`, `HA_SITE_NAME`, `MQTT_TOPIC_PREFIX`, `HA_TELEMETRY_INTERVAL_MS`, `HA_CELLS_INTERVAL_MS`, `HA_MAINT_UNLOCK_TIMEOUT_MS` di [config.h](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/config.h).
+  - Config guard `#define ENABLE_HA_MQTT 0` (set `1` untuk mode HA), `HA_DEVICE_ID`, `HA_SITE_NAME`, `MQTT_TOPIC_PREFIX`, `HA_TELEMETRY_INTERVAL_MS`, `HA_CELLS_INTERVAL_MS`, `HA_MAINT_UNLOCK_TIMEOUT_MS` di [config.h](../../../firmware/shoto_samoto_bridge/config.h).
   - Multi-pack read-only audit `run_shoto_param_audit(uint8_t addr, BankExt& snap, PackEepromSnapshot* eep_out)` dan CLI `params [1|2|3|4|all]` (saat `all`, menjalankan 1 pack per siklus poll agar live pack age selalu `< POLICY_FRESHNESS_MS` / `9000 ms`).
   - FreeRTOS task `ha_mqtt_task` (Core `0`, priority `1`, stack `8192 B`), NVS persistence via `Preferences` namespace `"shoto_ha"`, non-blocking Wi-Fi/MQTT reconnect backoff (`5s -> 30s`), LWT `online`/`offline`, auto-relock `Maintenance Unlock` setelah `300000 ms`.
 
@@ -243,9 +243,9 @@ Run: `python3 -c "print('Verify stub fail before ino update')"` / compile `.ino`
 
 - [ ] **Step 2: Implement `config.h`, `platformio.ini`, and `shoto_samoto_bridge.ino` updates**
 
-1. Di [platformio.ini](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/platformio.ini): tambahkan `lib_deps = knolleary/PubSubClient @ ^2.8` pada kedua environment (`diy_esp32_wroom32`, `waveshare_esp32s3`).
-2. Di [config.h](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/config.h): tambahkan blok `#ifndef ENABLE_HA_MQTT / #define ENABLE_HA_MQTT 0`, `HA_DEVICE_ID` (`"shoto_ils6300"`), `HA_SITE_NAME` (`"PLTS Samoto ILS6300"`), `MQTT_TOPIC_PREFIX` (`"shoto_bridge/ils6300"`), `HA_TELEMETRY_INTERVAL_MS` (`3000UL`), `HA_CELLS_INTERVAL_MS` (`5000UL`), `HA_MAINT_UNLOCK_TIMEOUT_MS` (`300000UL`).
-3. Di [shoto_samoto_bridge.ino](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino):
+1. Di [platformio.ini](../../../firmware/shoto_samoto_bridge/platformio.ini): tambahkan `lib_deps = knolleary/PubSubClient @ ^2.8` pada kedua environment (`diy_esp32_wroom32`, `waveshare_esp32s3`).
+2. Di [config.h](../../../firmware/shoto_samoto_bridge/config.h): tambahkan blok `#ifndef ENABLE_HA_MQTT / #define ENABLE_HA_MQTT 0`, `HA_DEVICE_ID` (`"shoto_ils6300"`), `HA_SITE_NAME` (`"PLTS Samoto ILS6300"`), `MQTT_TOPIC_PREFIX` (`"shoto_bridge/ils6300"`), `HA_TELEMETRY_INTERVAL_MS` (`3000UL`), `HA_CELLS_INTERVAL_MS` (`5000UL`), `HA_MAINT_UNLOCK_TIMEOUT_MS` (`300000UL`).
+3. Di [shoto_samoto_bridge.ino](../../../firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino):
    - Simpan `PackEepromSnapshot g_pack_eeprom[MAX_PACKS]` dilindungi `g_snap_mutex`.
    - Perbarui `run_shoto_param_audit()` agar mengisi `PackEepromSnapshot` dan mendukung CLI `params`, `params 1..4`, serta `params all` (antrian slot satu per siklus Core 0 agar pack lain tetap segar `< 9000 ms`).
    - Di bawah `#if ENABLE_HA_MQTT`: tambahkan `WiFi.h`, `PubSubClient.h`, `Preferences.h`, `ArduinoOTA.h` (port LAN only), `__has_include("secrets.h")`, `ha_mqtt_task` (Core 0, prio 1, stack 8192), `PubSubClient::setBufferSize(1600)`, auto-discovery bertahap (1–2 entity per loop agar WDT aman), publish bank/diag/packs/cells/eeprom, handler MQTT command memakai `parse_ha_command()`, clamp via `clamp_runtime_policy()`, simpan ke NVS.
@@ -401,7 +401,7 @@ git commit -m "feat: add Shoto BMS safety alert automations and utility scripts"
 - Modify: `PROJECT_CONTEXT.md` (tambahkan ringkasan arsitektur HA & riwayat changelog).
 
 **Interfaces:**
-- Consumes: Firmware lengkap (Task 1–3), konfigurasi Mini PC + Proxy (Task 4), Dashboard + Automations (Task 5–6), dan panduan pengguna ([GUIDE-HOME-ASSISTANT.md](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/GUIDE-HOME-ASSISTANT.md)).
+- Consumes: Firmware lengkap (Task 1–3), konfigurasi Mini PC + Proxy (Task 4), Dashboard + Automations (Task 5–6), dan panduan pengguna ([GUIDE-HOME-ASSISTANT.md](../../guides/GUIDE-HOME-ASSISTANT.md)).
 - Produces: Sistem terverifikasi penuh di hardware nyata (`ILS6300` + `2× Shoto SD-BA430`, atau `IHF6200` + `3× Shoto`) melalui LAN dan IP Publik.
 
 - [ ] **Step 1: Run complete host regression & 6-matrix compile verification**
@@ -435,7 +435,7 @@ Matikan Wi-Fi router / blokir port MQTT selama 3 menit saat inverter aktif menyu
 
 - [ ] **Step 5: Update `PROJECT_CONTEXT.md` & Commit**
 
-Catat milestone integrasi Home Assistant di [PROJECT_CONTEXT.md](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/PROJECT_CONTEXT.md), lalu commit:
+Catat milestone integrasi Home Assistant di [PROJECT_CONTEXT.md](../../../PROJECT_CONTEXT.md), lalu commit:
 ```bash
 git add PROJECT_CONTEXT.md
 git commit -m "docs: record verified Home Assistant integration milestone"

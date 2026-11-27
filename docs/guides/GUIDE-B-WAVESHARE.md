@@ -2,7 +2,7 @@
 
 > **Panduan Induk:** [GUIDE.md](GUIDE.md) · **Jalur BOM Meja Kerja Anda (Opsi A):** [GUIDE-A-DIY.md](GUIDE-A-DIY.md)  
 > **Target Sistem:** Inverter **Samoto IHF6200 / ILS6300 (48 VDC)** ↔ **Waveshare ESP32-S3-RS485-CAN (SKU 32154 / 34781)** + **1× Modul RS485 TTL Auto-Direction Terisolasi (`SH1.0`)** ↔ **2× Shoto SmartLi `SDA10-48100 / SDA10-48150 / SDA10-4850` (tanpa DIP switch)**  
-> **Status Dokumen:** v3.0 — Diperbarui berdasarkan Reverse Engineering (RE) paket referensi [`reference/2019-07-31  TianBangda LFP MS-ShotoV1.1.exe`](reference/) (`Shoto BMS Modbus V1.2`, `TianBangda Binary .NET`, `YD/T 1363.3 V2.8`), dokumentasi resmi Waveshare ESP32-S3-RS485-CAN, manual Helios V2.2, serta parser Pylontech LV RS485.
+> **Status Dokumen:** v3.0 — Diperbarui berdasarkan Reverse Engineering (RE) paket referensi [`reference/2019-07-31  TianBangda LFP MS-ShotoV1.1.exe`](../../reference/) (`Shoto BMS Modbus V1.2`, `TianBangda Binary .NET`, `YD/T 1363.3 V2.8`), dokumentasi resmi Waveshare ESP32-S3-RS485-CAN, manual Helios V2.2, serta parser Pylontech LV RS485.
 
 ---
 
@@ -72,11 +72,11 @@ Opsi B dirancang untuk **instalasi panel PLTS permanen 24/7** dengan **isolasi g
 
 ### B01.2 Diagram & Pemetaan Pin Opsi B
 
-![Layout Perakitan Opsi B — Waveshare ESP32-S3-RS485-CAN](diagrams/waveshare.png)
+![Layout Perakitan Opsi B — Waveshare ESP32-S3-RS485-CAN](../diagrams/waveshare.png)
 
-> **File vektor asli:** [`diagrams/waveshare.svg`](diagrams/waveshare.svg)
+> **File vektor asli:** [`docs/diagrams/waveshare.svg`](../diagrams/waveshare.svg)
 
-Pemetaan pin pada firmware [`config.h`](firmware/shoto_samoto_bridge/config.h) (`#define BOARD_WAVESHARE_S3`) cocok persis dengan skematik resmi Waveshare `[S6][S7][S8]`:
+Pemetaan pin pada firmware [`config.h`](../../firmware/shoto_samoto_bridge/config.h) (`#define BOARD_WAVESHARE_S3`) cocok persis dengan skematik resmi Waveshare `[S6][S7][S8]`:
 
 | Port / Antarmuka | Pin ESP32-S3 | Koneksi Tujuan | Catatan Penting |
 |---|---|---|---|
@@ -113,9 +113,9 @@ Pemetaan pin pada firmware [`config.h`](firmware/shoto_samoto_bridge/config.h) (
 
 > **Larangan Keras:** Port RJ45 baterai bukan port Ethernet/PoE; jangan pernah mencolok/mencabut kabel cascade saat baterai sedang charge/discharge aktif, dan jangan men-seri daya 48 V.
 
-![Wiring Dua Shoto SmartLi & Terminator 120 Ohm](diagrams/shoto-cascade.png)
+![Wiring Dua Shoto SmartLi & Terminator 120 Ohm](../diagrams/shoto-cascade.png)
 
-> **File vektor asli:** [`diagrams/shoto-cascade.svg`](diagrams/shoto-cascade.svg)
+> **File vektor asli:** [`docs/diagrams/shoto-cascade.svg`](../diagrams/shoto-cascade.svg)
 
 1. **Langkah 1 — Cocokkan Varian Pinout `T568B` (`Pin 1 Putih-Oranye` & `Pin 2 Oranye`):**
    - **Varian A (`SmartLi V2.2 Tanpa DIP` — Helios Table 6, p.11):** `Pin 1 (Putih-Oranye) = RS485 A+`, `Pin 2 (Oranye) = RS485 B-`, `Pin 7 (Putih-Coklat) = CAN H`, `Pin 8 (Coklat) = CAN L`.
@@ -175,16 +175,16 @@ Pemetaan pin pada firmware [`config.h`](firmware/shoto_samoto_bridge/config.h) (
 
 ## Phase B04 — Flash Firmware Ready-to-Use ke Waveshare ESP32-S3
 
-**Tujuan Phase Ini:** Mem-flash [`firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino`](firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino) dalam mode Waveshare ESP32-S3 (`#define BOARD_WAVESHARE_S3`) dan menguji pembacaan langsung ke baterai lewat terminal RS485 onboard.
+**Tujuan Phase Ini:** Mem-flash [`firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino`](../../firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino) dalam mode Waveshare ESP32-S3 (`#define BOARD_WAVESHARE_S3`) dan menguji pembacaan langsung ke baterai lewat terminal RS485 onboard.
 
-### B04.1 Langkah 1 — Edit [`firmware/shoto_samoto_bridge/config.h`](firmware/shoto_samoto_bridge/config.h)
+### B04.1 Langkah 1 — Edit [`firmware/shoto_samoto_bridge/config.h`](../../firmware/shoto_samoto_bridge/config.h)
 
-1. **Aktifkan Board Waveshare ESP32-S3:** Buka [`config.h`](firmware/shoto_samoto_bridge/config.h), beri komentar/biarkan `#ifndef BOARD_WAVESHARE_S3` dan **hapus tanda `//` di depan `#define BOARD_WAVESHARE_S3`**:
+1. **Aktifkan Board Waveshare ESP32-S3:** Buka [`config.h`](../../firmware/shoto_samoto_bridge/config.h), beri komentar/biarkan `#ifndef BOARD_WAVESHARE_S3` dan **hapus tanda `//` di depan `#define BOARD_WAVESHARE_S3`**:
    ```cpp
    // #define BOARD_DIY_XY_K485
    #define BOARD_WAVESHARE_S3
    ```
-   *(Catatan: Jika memakai PlatformIO env `waveshare_esp32s3`, `-DBOARD_WAVESHARE_S3` sudah diset otomatis dari [`platformio.ini`](firmware/shoto_samoto_bridge/platformio.ini)).*
+   *(Catatan: Jika memakai PlatformIO env `waveshare_esp32s3`, `-DBOARD_WAVESHARE_S3` sudah diset otomatis dari [`platformio.ini`](../../firmware/shoto_samoto_bridge/platformio.ini)).*
 2. **Sesuaikan Hasil B03:** Biarkan `SHOTO_PROTOCOL PROTO_AUTO` (atau kunci ke protokol hasil B03), atur `SHOTO_BAUD` (`9600`), serta atur `PACK_COUNT` (`1` atau `2`) dan `PACK1_ADDR` / `PACK2_ADDR` sesuai jumlah ID yang menjawab di B03.
 3. **Biarkan Mode Aman Default:** Pastikan `BRIDGE_MODE = MODE_MONITOR_ONLY` (`0`) dan `POLICY_USER_APPROVED = false` belum diubah dulu.
 
@@ -192,7 +192,7 @@ Pemetaan pin pada firmware [`config.h`](firmware/shoto_samoto_bridge/config.h) (
 
 #### Cara A (Arduino IDE 2.x — Paling Mudah)
 1. Install board **`esp32` by Espressif Systems** via *Boards Manager*.
-2. Buka [`firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino`](firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino).
+2. Buka [`firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino`](../../firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino).
 3. Menu *Tools*:
    - **Board:** `ESP32S3 Dev Module`
    - **USB CDC On Boot:** **`Enabled`** *(Wajib Enabled agar `Serial` monitor muncul lewat USB-C Waveshare!)*
@@ -208,9 +208,9 @@ pio device monitor -b 115200
 ```
 
 #### Cara C (Alternatif Home Assistant / ESPHome Reader)
-- Untuk `Shoto Modbus V1.2` (`SDA10-48100`, addr `38`/`39`, onboard RS485 `GPIO17/18/21`): gunakan [`firmware/waveshare-reader-modbus-v12.yaml`](firmware/waveshare-reader-modbus-v12.yaml).
-- Untuk `SmartLi DC/DC`: gunakan [`firmware/waveshare-reader.yaml`](firmware/waveshare-reader.yaml) beserta [`firmware/secrets.example.yaml`](firmware/secrets.example.yaml).
-- *Catatan:* Firmware utama untuk sinkronisasi real-time ke Samoto tetap [`shoto_samoto_bridge.ino`](firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino).
+- Untuk `Shoto Modbus V1.2` (`SDA10-48100`, addr `38`/`39`, onboard RS485 `GPIO17/18/21`): gunakan [`firmware/waveshare-reader-modbus-v12.yaml`](../../firmware/waveshare-reader-modbus-v12.yaml).
+- Untuk `SmartLi DC/DC`: gunakan [`firmware/waveshare-reader.yaml`](../../firmware/waveshare-reader.yaml) beserta [`firmware/secrets.example.yaml`](../../firmware/secrets.example.yaml).
+- *Catatan:* Firmware utama untuk sinkronisasi real-time ke Samoto tetap [`shoto_samoto_bridge.ino`](../../firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino).
 
 ### B04.3 Langkah 3 — Hubungkan Baterai ke RS485 Onboard Waveshare & Uji CLI
 
@@ -249,7 +249,7 @@ pio device monitor -b 115200
 
 **Tujuan Phase Ini:** Mengaktifkan respon Pylontech LV RS485 di `shoto_samoto_bridge.ino` dan memastikan parameter Shoto terbaca presisi di LCD Samoto.
 
-1. **Langkah 1 — Aktifkan Bridge di [`config.h`](firmware/shoto_samoto_bridge/config.h) & Upload Ulang:**
+1. **Langkah 1 — Aktifkan Bridge di [`config.h`](../../firmware/shoto_samoto_bridge/config.h) & Upload Ulang:**
    ```cpp
    #define BRIDGE_MODE           MODE_BRIDGE_ACTIVE
    #define POLICY_USER_APPROVED  true
@@ -272,7 +272,7 @@ pio device monitor -b 115200
 ## Phase B07 — Integrasi Home Assistant (Opsional)
 
 - Rekomendasi utama panel 24/7: pertahankan Waveshare utama **khusus** menjalankan `shoto_samoto_bridge.ino` tanpa ketergantungan Wi-Fi/OTA agar sinkronisasi ke Samoto kebal dari restart jaringan.
-- Jika ingin membaca ke Home Assistant sebagai monitoring terpisah, gunakan [`firmware/waveshare-reader-modbus-v12.yaml`](firmware/waveshare-reader-modbus-v12.yaml) atau [`firmware/waveshare-reader.yaml`](firmware/waveshare-reader.yaml).
+- Jika ingin membaca ke Home Assistant sebagai monitoring terpisah, gunakan [`firmware/waveshare-reader-modbus-v12.yaml`](../../firmware/waveshare-reader-modbus-v12.yaml) atau [`firmware/waveshare-reader.yaml`](../../firmware/waveshare-reader.yaml).
 
 **Gate B07 (Ceklis):**
 - [ ] (Opsional) Integrasi HA tidak mengganggu determinisme tugas bridge RS485 ke Samoto.

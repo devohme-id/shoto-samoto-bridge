@@ -45,14 +45,14 @@ Dari pembacaan langsung aliran data serial ESP32 (`/dev/cu.usbserial-1410`), pem
 
 Seluruh perbaikan bersifat mempertahankan prinsip keamanan *fail-closed* (tetap memutus aman jika ada bahaya nyata), dengan peningkatan di 4 file:
 
-1. **Plafon Arus Aman Tingkat Bank (`CCL 90 A`, `DCL 120 A`)** — [`config.h`](firmware/shoto_samoto_bridge/config.h) & [`bridge_protocols.hpp`](firmware/shoto_samoto_bridge/bridge_protocols.hpp)
+1. **Plafon Arus Aman Tingkat Bank (`CCL 90 A`, `DCL 120 A`)** — [`config.h`](../../firmware/shoto_samoto_bridge/config.h) & [`bridge_protocols.hpp`](../../firmware/shoto_samoto_bridge/bridge_protocols.hpp)
    * Menambahkan `POLICY_CCL_BANK_MAX_A = 90.0f` dan `POLICY_DCL_BANK_MAX_A = 120.0f` serta pembatas di `DynamicLimits` / `compute_dynamic_caps()` agar bank 3–4 pack tidak pernah mengirim `DCL` `150 A / 200 A` ke `IHF6200`.
-2. **Konfirmasi Baca Ulang Sesaat (*Anti-Glitch* `delta_V`)** — [`bridge_protocols.hpp`](firmware/shoto_samoto_bridge/bridge_protocols.hpp) & [`shoto_samoto_bridge.ino`](firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino)
+2. **Konfirmasi Baca Ulang Sesaat (*Anti-Glitch* `delta_V`)** — [`bridge_protocols.hpp`](../../firmware/shoto_samoto_bridge/bridge_protocols.hpp) & [`shoto_samoto_bridge.ino`](../../firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino)
    * Menambahkan `classify_bank_inhibit()` (`InhibitReason`) dan mempercepat jeda antar-pack dari `80 ms` menjadi `25 ms`.
    * Jika terdeteksi `INHIBIT_DELTA_V` (`> 1,0 V`), ESP32 melakukan **1× baca ulang cepat konfirmasi langsung (`15 ms` antar-pack)** sebelum mengunci `g_bank` — menghilangkan false alarm akibat skew beban sesaat tanpa melonggarkan proteksi selisih tegangan nyata.
-3. **Alat Diagnostik Live (`diag` & `status`)** — [`shoto_samoto_bridge.ino`](firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino)
+3. **Alat Diagnostik Live (`diag` & `status`)** — [`shoto_samoto_bridge.ino`](../../firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino)
    * Menambahkan counter `inhibit`, `last_inhibit_reason`, `dvRetry` (`ok/fail`), `peakDV`, `peakAge`, `mtxMiss`, counter per-perintah inverter (`60H/61H/62H/63H`), deteksi mode (`PYL_FULL` vs `SCAN_61H_ONLY`), serta tampilan frame TX terakhir (`63H/62H/61H`).
-4. **Unit Test Regresi (Suite 10) & Build Check** — [`tests/bridge_test.cpp`](tests/bridge_test.cpp)
+4. **Unit Test Regresi (Suite 10) & Build Check** — [`tests/bridge_test.cpp`](../../tests/bridge_test.cpp)
    * Memverifikasi plafon `90 A / 120 A`, frame `63H` 3-pack (`D160B3B0038404B0C0`), seluruh 8 kode `InhibitReason`, Python unittest (`12/12 OK`), C++ `gnu++11`/`gnu++17` (`-Wall -Wextra -Werror`), dan 4 varian build `.ino` (`PASS`).
 
 ---

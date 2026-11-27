@@ -1,7 +1,9 @@
 # Panduan Induk Bridge Shoto SmartLi ↔ Samoto IHF6200 / ILS6300 (v3.0)
 
+[Peta repositori](../../README.md) · [Wiki offline](../WIKI-SHOTO-SAMOTO.html) · [Home Assistant](GUIDE-HOME-ASSISTANT.md)
+
 > **Tujuan Utama Proyek:** Menghubungkan bank **2× Shoto SmartLi `SDA10-48100 / SDA10-48150 / SDA10-4850` (tanpa DIP switch)** ke inverter **Samoto `IHF6200 / ILS6300` (48 VDC)** melalui bridge ESP32 dual-UART agar seluruh **parameter BMS baterai** (`Tegangan Pack`, `Arus +/-`, `SOC %`, `SOH %`, `Suhu`, serta batas pengaman `CVL/DVL/CCL/DCL`) tersinkron dan terbaca akurat oleh inverter.  
-> **Standar Kebenaran Dokumen:** Seluruh protokol & codec telah di-reverse-engineer langsung dari paket referensi [`reference/`](reference/) (`TianBangda LFP MS-ShotoV1.1.exe`, `Shoto BMS Modbus V1.2 PDF`, `BMS Protocol V2.8 DOC`) dan diverifikasi lewat unit test Python & C++17. Fakta pinout/protokol unit fisik Anda di lapangan **tetap wajib dibuktikan pada Fase A03 / B03** menggunakan **Autonics SCM-US48I** sebelum menutup rangkaian ke Samoto.
+> **Standar Kebenaran Dokumen:** Seluruh protokol & codec telah di-reverse-engineer langsung dari paket referensi [`reference/`](../../reference/) (`TianBangda LFP MS-ShotoV1.1.exe`, `Shoto BMS Modbus V1.2 PDF`, `BMS Protocol V2.8 DOC`) dan diverifikasi lewat unit test Python & C++17. Fakta pinout/protokol unit fisik Anda di lapangan **tetap wajib dibuktikan pada Fase A03 / B03** menggunakan **Autonics SCM-US48I** sebelum menutup rangkaian ke Samoto.
 
 ---
 
@@ -28,17 +30,17 @@ Sistem selalu terbagi menjadi **3 segmen yang terpisah secara elektrikal pada ja
 
 | Diagram | Cakupan | File |
 |---|---|---|
-| **Rangkaian Utuh Opsi A** | Shoto #1/#2 + Terminator + 2× XY-K485 + ESP32 + 5V 2A + Samoto IHF6200/ILS6300 + Jalur 48V + SCM-US48I | [PNG](diagrams/diy-xy-k485.png) · [SVG](diagrams/diy-xy-k485.svg) |
-| **Patch Cord Realistis: `XY-K485 #1 ↔ Shoto RS485B`** | Panduan visual kupas T568B (Pin 1 Putih-Oranye, Pin 2 Oranye) ke sekrup `XY-K485 #1` & Varian A/B | [PNG](diagrams/patchcord-xy-k485-shoto.png) · [SVG](diagrams/patchcord-xy-k485-shoto.svg) |
-| **Patch Cord Realistis: `XY-K485 #2 ↔ Samoto BMS`** | Panduan visual kupas T568B (Kandidat #1: Pin 5 Putih-Biru `A+`, Pin 3 Putih-Hijau `B−`) ke sekrup `XY-K485 #2` | [PNG](diagrams/patchcord-xy-k485-samoto.png) · [SVG](diagrams/patchcord-xy-k485-samoto.svg) |
-| **Wiring Dua Shoto & Terminator** | Langkah 1–4 Cascade + Varian Pinout RJ45 A vs B + Pembuatan & Uji Terminator `120 Ω` | [PNG](diagrams/shoto-cascade.png) · [SVG](diagrams/shoto-cascade.svg) |
-| **Layout Opsi B (Waveshare S3)** | Waveshare ESP32-S3-RS485-CAN (`GPIO17/18/21`) + `SH1.0` (`GPIO1/2`) | [PNG](diagrams/waveshare.png) · [SVG](diagrams/waveshare.svg) |
+| **Rangkaian Utuh Opsi A** | Shoto #1/#2 + Terminator + 2× XY-K485 + ESP32 + 5V 2A + Samoto IHF6200/ILS6300 + Jalur 48V + SCM-US48I | [PNG](../diagrams/diy-xy-k485.png) · [SVG](../diagrams/diy-xy-k485.svg) |
+| **Patch Cord Realistis: `XY-K485 #1 ↔ Shoto RS485B`** | Panduan visual kupas T568B (Pin 1 Putih-Oranye, Pin 2 Oranye) ke sekrup `XY-K485 #1` & Varian A/B | [PNG](../diagrams/patchcord-xy-k485-shoto.png) · [SVG](../diagrams/patchcord-xy-k485-shoto.svg) |
+| **Patch Cord Realistis: `XY-K485 #2 ↔ Samoto BMS`** | Panduan visual kupas T568B (Kandidat #1: Pin 5 Putih-Biru `A+`, Pin 3 Putih-Hijau `B−`) ke sekrup `XY-K485 #2` | [PNG](../diagrams/patchcord-xy-k485-samoto.png) · [SVG](../diagrams/patchcord-xy-k485-samoto.svg) |
+| **Wiring Dua Shoto & Terminator** | Langkah 1–4 Cascade + Varian Pinout RJ45 A vs B + Pembuatan & Uji Terminator `120 Ω` | [PNG](../diagrams/shoto-cascade.png) · [SVG](../diagrams/shoto-cascade.svg) |
+| **Layout Opsi B (Waveshare S3)** | Waveshare ESP32-S3-RS485-CAN (`GPIO17/18/21`) + `SH1.0` (`GPIO1/2`) | [PNG](../diagrams/waveshare.png) · [SVG](../diagrams/waveshare.svg) |
 
 ---
 
 ## 3. Matriks Fakta Protokol Shoto (Hasil Deep Reverse Engineering)
 
-Seluruh 4 protokol berikut **didukung otomatis** oleh `python3 tools/serial_lab.py autodetect` maupun firmware `PROTO_AUTO` pada [`firmware/shoto_samoto_bridge/bridge_protocols.hpp`](firmware/shoto_samoto_bridge/bridge_protocols.hpp):
+Seluruh 4 protokol berikut **didukung otomatis** oleh `python3 tools/serial_lab.py autodetect` maupun firmware `PROTO_AUTO` pada [`firmware/shoto_samoto_bridge/bridge_protocols.hpp`](../../firmware/shoto_samoto_bridge/bridge_protocols.hpp):
 
 | ID Firmware (`config.h`) | Sumber Referensi Terbukti | Baud & Framing | Alamat / Query | Konvensi Arus Asli → Normalisasi Bridge (`+ = Charge, - = Discharge`) |
 |---|---|---|---|---|
@@ -64,25 +66,25 @@ Seluruh 4 protokol berikut **didukung otomatis** oleh `python3 tools/serial_lab.
 ## 4. Peta File Tools & Firmware di Repository Ini
 
 ### 4.1 Tool Diagnosa Lapangan (`Autonics SCM-US48I`)
-- **[`tools/serial_lab.py`](tools/serial_lab.py)**:
+- **[`tools/serial_lab.py`](../../tools/serial_lab.py)**:
   - `python3 tools/serial_lab.py autodetect --port <PORT>` → memindai 4 protokol Shoto secara *read-only* di `9600` & `19200` baud.
   - `python3 tools/serial_lab.py probe --port <PORT> --baud <BAUD> --ids 38,39,1,2 --detail` → menguji pembacaan 1 vs 2 baterai.
   - `python3 tools/serial_lab.py capture --port <PORT> --baud 9600 --seconds 45 --out data/samoto_capture.log` → menangkap frame asli port BMS Samoto.
   - `python3 tools/serial_lab.py decode <FILE>` → men-decode file capture (YD/T 1363.3 ASCII, TianBangda binary, Modbus RTU).
-- **[`tests/test_serial_lab.py`](tests/test_serial_lab.py)**: unit test Python dengan golden frames dari `.exe` dan PDF V1.2.
+- **[`tests/test_serial_lab.py`](../../tests/test_serial_lab.py)**: unit test Python dengan golden frames dari `.exe` dan PDF V1.2.
 
 ### 4.2 Firmware ESP32 Siap Flash (Dual-Core FreeRTOS Bridge)
-Folder *self-contained* **[`firmware/shoto_samoto_bridge/`](firmware/shoto_samoto_bridge/)** siap dibuka di **Arduino IDE 2.x** maupun **PlatformIO**:
-- **[`shoto_samoto_bridge.ino`](firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino)**: Task baca Shoto (`Core 0`), task respon emulasi Pylontech LV RS485 (`Core 1`, `0x61/0x62/0x63` + `0x42/0x44/0x47/0x4F/0x51/0x92`), serta Serial CLI `115200` (`status`, `cells`, `raw`, `scan`, `help`).
-- **[`config.h`](firmware/shoto_samoto_bridge/config.h)**: Pemilihan board (`BOARD_DIY_XY_K485` / `BOARD_WAVESHARE_S3`), protokol (`PROTO_AUTO` default), `PACK_COUNT` (`1` default), mode keamanan (`BRIDGE_MODE = MODE_MONITOR_ONLY`, `POLICY_USER_APPROVED = false` default), dan batas `CVL/DVL/CCL/DCL/Vdelta/Freshness`.
-- **[`bridge_protocols.hpp`](firmware/shoto_samoto_bridge/bridge_protocols.hpp)** & **[`safety_core.hpp`](firmware/shoto_samoto_bridge/safety_core.hpp)**: Codec 4 protokol Shoto, agregasi 1–2 baterai, fail-closed zero-limit inhibit (`5000 ms` stale / delta `> 1.0 V` → `CCL=0, DCL=0`), dan encoder Pylontech.
-- **[`platformio.ini`](firmware/shoto_samoto_bridge/platformio.ini)**: Target `diy_esp32_wroom32` dan `waveshare_esp32s3`.
-- **Unit test C++17 host:** [`tests/safety_test.cpp`](tests/safety_test.cpp) dan [`tests/bridge_test.cpp`](tests/bridge_test.cpp).
+Folder *self-contained* **[`firmware/shoto_samoto_bridge/`](../../firmware/shoto_samoto_bridge/)** siap dibuka di **Arduino IDE 2.x** maupun **PlatformIO**:
+- **[`shoto_samoto_bridge.ino`](../../firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino)**: Task baca Shoto (`Core 0`), task respon emulasi Pylontech LV RS485 (`Core 1`, `0x61/0x62/0x63` + `0x42/0x44/0x47/0x4F/0x51/0x92`), serta Serial CLI `115200` (`status`, `cells`, `raw`, `scan`, `help`).
+- **[`config.h`](../../firmware/shoto_samoto_bridge/config.h)**: Pemilihan board (`BOARD_DIY_XY_K485` / `BOARD_WAVESHARE_S3`), protokol (`PROTO_AUTO` default), `PACK_COUNT` (`1` default), mode keamanan (`BRIDGE_MODE = MODE_MONITOR_ONLY`, `POLICY_USER_APPROVED = false` default), dan batas `CVL/DVL/CCL/DCL/Vdelta/Freshness`.
+- **[`bridge_protocols.hpp`](../../firmware/shoto_samoto_bridge/bridge_protocols.hpp)** & **[`safety_core.hpp`](../../firmware/shoto_samoto_bridge/safety_core.hpp)**: Codec 4 protokol Shoto, agregasi 1–2 baterai, fail-closed zero-limit inhibit (`5000 ms` stale / delta `> 1.0 V` → `CCL=0, DCL=0`), dan encoder Pylontech.
+- **[`platformio.ini`](../../firmware/shoto_samoto_bridge/platformio.ini)**: Target `diy_esp32_wroom32` dan `waveshare_esp32s3`.
+- **Unit test C++17 host:** [`tests/safety_test.cpp`](../../tests/safety_test.cpp) dan [`tests/bridge_test.cpp`](../../tests/bridge_test.cpp).
 
 ### 4.3 Template ESPHome (Khusus Monitoring Wi-Fi / Home Assistant Opsional)
-- **Modbus V1.2 (`SDA10-48100`, addr `38`/`39`):** [`firmware/diy-reader-modbus-v12.yaml`](firmware/diy-reader-modbus-v12.yaml) & [`firmware/waveshare-reader-modbus-v12.yaml`](firmware/waveshare-reader-modbus-v12.yaml).
-- **SmartLi DC/DC (`0x0000/0x1030`):** [`firmware/diy-reader.yaml`](firmware/diy-reader.yaml) & [`firmware/waveshare-reader.yaml`](firmware/waveshare-reader.yaml).
-- **Secrets template:** [`firmware/secrets.example.yaml`](firmware/secrets.example.yaml).
+- **Modbus V1.2 (`SDA10-48100`, addr `38`/`39`):** [`firmware/diy-reader-modbus-v12.yaml`](../../firmware/diy-reader-modbus-v12.yaml) & [`firmware/waveshare-reader-modbus-v12.yaml`](../../firmware/waveshare-reader-modbus-v12.yaml).
+- **SmartLi DC/DC (`0x0000/0x1030`):** [`firmware/diy-reader.yaml`](../../firmware/diy-reader.yaml) & [`firmware/waveshare-reader.yaml`](../../firmware/waveshare-reader.yaml).
+- **Secrets template:** [`firmware/secrets.example.yaml`](../../firmware/secrets.example.yaml).
 
 ---
 
