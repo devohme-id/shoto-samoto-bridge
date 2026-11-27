@@ -1,0 +1,1141 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wiki Shoto ↔ Samoto BMS Bridge &amp; Home Assistant</title>
+<style>
+  :root {
+    --bg: #f6f8fb;
+    --surface: #ffffff;
+    --surface-alt: #f0f4f8;
+    --border: #d8dee9;
+    --text: #1b2430;
+    --muted: #556275;
+    --accent: #0f62fe;
+    --accent-soft: #e7f0ff;
+    --danger-bg: #fff1f2;
+    --danger-bd: #e11d48;
+    --warn-bg: #fffbeb;
+    --warn-bd: #d97706;
+    --ok-bg: #ecfdf5;
+    --ok-bd: #059669;
+    --info-bg: #eff6ff;
+    --info-bd: #2563eb;
+    --code-bg: #f1f5f9;
+    --mark-bg: #fde047;
+    --mark-fg: #111827;
+    --shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
+  }
+  [data-theme="dark"] {
+    --bg: #0f141c;
+    --surface: #171e29;
+    --surface-alt: #1f2836;
+    --border: #2c384a;
+    --text: #e6edf6;
+    --muted: #9aa7b8;
+    --accent: #60a5fa;
+    --accent-soft: #1e2d45;
+    --danger-bg: #2c141a;
+    --danger-bd: #fb7185;
+    --warn-bg: #2a2112;
+    --warn-bd: #fbbf24;
+    --ok-bg: #0f2920;
+    --ok-bd: #34d399;
+    --info-bg: #132238;
+    --info-bd: #60a5fa;
+    --code-bg: #0d131b;
+    --mark-bg: #ca8a04;
+    --mark-fg: #ffffff;
+    --shadow: 0 2px 14px rgba(0, 0, 0, 0.35);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.62;
+    font-size: 15px;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.9em;
+  }
+  code {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    padding: 0.1em 0.36em;
+    border-radius: 4px;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    position: relative;
+    line-height: 1.48;
+  }
+  .code-wrap { position: relative; margin: 12px 0; }
+  .copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    font-size: 12px;
+    padding: 3px 9px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    z-index: 2;
+  }
+  .copy-btn:hover { background: var(--accent-soft); border-color: var(--accent); }
+
+  /* Top sticky header */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    box-shadow: var(--shadow);
+  }
+  .topbar-inner {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 12px 20px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+  }
+  .brand {
+    display: flex;
+    flex-direction: column;
+    min-width: 240px;
+  }
+  .brand-title {
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .brand-sub {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .search-box {
+    flex: 1 1 320px;
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .search-box input {
+    width: 100%;
+    padding: 9px 76px 9px 34px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-alt);
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+  }
+  .search-box input:focus {
+    border-color: var(--accent);
+    background: var(--surface);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .search-icon {
+    position: absolute;
+    left: 11px;
+    color: var(--muted);
+    font-size: 14px;
+    pointer-events: none;
+  }
+  .search-kbd {
+    position: absolute;
+    right: 34px;
+    font-size: 11px;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    background: var(--surface);
+    pointer-events: none;
+  }
+  .clear-btn {
+    position: absolute;
+    right: 8px;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 17px;
+    cursor: pointer;
+    display: none;
+    line-height: 1;
+    padding: 2px 5px;
+  }
+  .clear-btn.visible { display: inline-block; }
+  .top-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .match-stat {
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .btn {
+    border: 1px solid var(--border);
+    background: var(--surface-alt);
+    color: var(--text);
+    padding: 7px 11px;
+    border-radius: 7px;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .mobile-toc-btn { display: none; }
+
+  .chips-bar {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 20px 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .chip {
+    border: 1px solid var(--border);
+    background: var(--surface-alt);
+    color: var(--muted);
+    padding: 4px 11px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--text); }
+  .chip.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #ffffff;
+    font-weight: 600;
+  }
+
+  /* Main layout */
+  .layout {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+    display: grid;
+    grid-template-columns: 290px minmax(0, 1fr);
+    gap: 24px;
+    align-items: start;
+  }
+  .sidebar {
+    position: sticky;
+    top: 112px;
+    max-height: calc(100vh - 130px);
+    overflow-y: auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 12px;
+    box-shadow: var(--shadow);
+  }
+  .sidebar h2 {
+    margin: 0 0 10px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    padding: 0 8px;
+  }
+  .toc-group-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 12px 8px 4px;
+    letter-spacing: 0.04em;
+  }
+  .toc-link {
+    display: block;
+    padding: 5px 8px;
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--text);
+    border-left: 3px solid transparent;
+    margin-bottom: 2px;
+  }
+  .toc-link:hover { background: var(--surface-alt); text-decoration: none; }
+  .toc-link.active {
+    background: var(--accent-soft);
+    border-left-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .toc-link.hidden { display: none; }
+
+  .content {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    min-width: 0;
+  }
+
+  .hero-summary {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 22px;
+    box-shadow: var(--shadow);
+  }
+  .hero-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .stat-card {
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .stat-k { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .stat-v { font-size: 14px; font-weight: 600; margin-top: 2px; }
+
+  article.wiki-article {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 22px 24px;
+    box-shadow: var(--shadow);
+    scroll-margin-top: 122px;
+  }
+  article.wiki-article.hidden { display: none; }
+  .art-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 10px;
+    margin-bottom: 14px;
+  }
+  .art-head h2 {
+    margin: 0;
+    font-size: 20px;
+    line-height: 1.3;
+  }
+  .badges { display: flex; flex-wrap: wrap; gap: 6px; }
+  .badge {
+    font-size: 11.5px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .badge.cat { background: var(--surface-alt); color: var(--muted); border: 1px solid var(--border); }
+
+  h3 { margin: 18px 0 8px; font-size: 16px; }
+  h4 { margin: 14px 0 6px; font-size: 14.5px; }
+  p { margin: 8px 0; }
+  ul, ol { margin: 6px 0 10px 20px; padding: 0; }
+  li { margin: 4px 0; }
+
+  .callout {
+    border-left: 4px solid var(--info-bd);
+    background: var(--info-bg);
+    padding: 11px 14px;
+    border-radius: 0 8px 8px 0;
+    margin: 12px 0;
+  }
+  .callout.danger { border-left-color: var(--danger-bd); background: var(--danger-bg); }
+  .callout.warn { border-left-color: var(--warn-bd); background: var(--warn-bg); }
+  .callout.ok { border-left-color: var(--ok-bd); background: var(--ok-bg); }
+  .callout-title { font-weight: 700; margin-bottom: 4px; display: block; font-size: 13.5px; }
+
+  .table-wrap { overflow-x: auto; margin: 10px 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: var(--surface-alt);
+    font-weight: 600;
+  }
+
+  .kw-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin: 10px 0;
+  }
+  .kw-pill {
+    border: 1px solid var(--border);
+    background: var(--surface-alt);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12.5px;
+    cursor: pointer;
+    color: var(--text);
+  }
+  .kw-pill:hover { border-color: var(--accent); background: var(--accent-soft); text-decoration: none; }
+
+  .empty-state {
+    display: none;
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    padding: 32px 20px;
+    text-align: center;
+    color: var(--muted);
+  }
+  .empty-state.visible { display: block; }
+
+  mark.wiki-hl {
+    background: var(--mark-bg);
+    color: var(--mark-fg);
+    padding: 0 2px;
+    border-radius: 3px;
+  }
+
+  footer.wiki-footer {
+    max-width: 1400px;
+    margin: 0 auto 30px;
+    padding: 0 20px;
+    color: var(--muted);
+    font-size: 12.5px;
+  }
+
+  @media (max-width: 960px) {
+    .layout { grid-template-columns: 1fr; padding: 14px; }
+    .mobile-toc-btn { display: inline-block; }
+    .sidebar {
+      position: static;
+      max-height: none;
+      display: none;
+    }
+    .sidebar.open { display: block; }
+    article.wiki-article { padding: 16px; scroll-margin-top: 150px; }
+  }
+
+  @media print {
+    .topbar, .sidebar, .chips-bar, .copy-btn, .mobile-toc-btn { display: none !important; }
+    .layout { display: block; padding: 0; }
+    article.wiki-article { display: block !important; box-shadow: none; break-inside: avoid; border-color: #cbd5e1; margin-bottom: 14px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <div class="brand-title">Wiki PLTS Shoto ↔ Samoto Bridge</div>
+      <div class="brand-sub">Basis Pengetahuan Tunggal: IHF6200 (3-Pack), ILS6300 (2-Pack), HA MQTT &amp; Diagnosa</div>
+    </div>
+    <div class="search-box">
+      <span class="search-icon">&#128269;</span>
+      <input id="wikiSearch" type="search" placeholder="Cari kata kunci: Error 04, 52.1 V, INHIBIT, ±100 W, ILS6300, Mikrotik, Endloop..." autocomplete="off">
+      <span class="search-kbd">/</span>
+      <button id="clearSearch" class="clear-btn" title="Hapus pencarian (Esc)" aria-label="Hapus pencarian">&times;</button>
+    </div>
+    <div class="top-actions">
+      <span id="matchStat" class="match-stat">Menampilkan 12 dari 12 artikel</span>
+      <button id="toggleToc" class="btn mobile-toc-btn" type="button">Daftar Isi</button>
+      <button id="toggleTheme" class="btn" type="button" title="Ganti Tema Terang/Gelap">Tema</button>
+    </div>
+  </div>
+  <div class="chips-bar" id="categoryChips">
+    <button class="chip active" data-cat="all" type="button">Semua</button>
+    <button class="chip" data-cat="diagnosa" type="button">Diagnosa &amp; Error</button>
+    <button class="chip" data-cat="audit" type="button">Audit &amp; Parameter</button>
+    <button class="chip" data-cat="ha" type="button">Home Assistant &amp; MQTT</button>
+    <button class="chip" data-cat="multi" type="button">Multi-Inverter</button>
+    <button class="chip" data-cat="jaringan" type="button">Jaringan &amp; Mikrotik</button>
+    <button class="chip" data-cat="hardware" type="button">Hardware &amp; Protokol</button>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="wikiSidebar">
+    <h2>Navigasi Artikel</h2>
+    <div class="toc-group-label">Inti &amp; Diagnosa Kritis</div>
+    <a class="toc-link" href="#arsitektur" data-target="arsitektur">1. Arsitektur &amp; Prinsip Keselamatan</a>
+    <a class="toc-link" href="#error-04-52v-0pct" data-target="error-04-52v-0pct">2. Diagnosa 52.1 V + 0% + Error 04</a>
+    <a class="toc-link" href="#timing-bridge" data-target="timing-bridge">3. Audit Timing Bridge ke Inverter</a>
+    <a class="toc-link" href="#audit-gap-daya" data-target="audit-gap-daya">4. Audit Gap Daya Bank &plusmn;100 W</a>
+
+    <div class="toc-group-label">Konfigurasi &amp; Multi-Site</div>
+    <a class="toc-link" href="#policy-config" data-target="policy-config">5. Aturan Safety config.h (0&ndash;4 Pack)</a>
+    <a class="toc-link" href="#multi-inverter" data-target="multi-inverter">6. Setup Terpisah Inverter #2 (ILS6300)</a>
+    <a class="toc-link" href="#home-assistant" data-target="home-assistant">7. Home Assistant &amp; 212 Entitas MQTT</a>
+    <a class="toc-link" href="#jaringan-mikrotik" data-target="jaringan-mikrotik">8. Jaringan, VirtualBox &amp; Mikrotik NAT</a>
+
+    <div class="toc-group-label">Hardware, Protokol &amp; Referensi</div>
+    <a class="toc-link" href="#hardware-wiring" data-target="hardware-wiring">9. Wiring RJ45, MOP Cascade &amp; Menu</a>
+    <a class="toc-link" href="#protokol-eeprom" data-target="protokol-eeprom">10. Protokol Shoto, EEPROM &amp; 60H..63H</a>
+    <a class="toc-link" href="#cli-troubleshooting" data-target="cli-troubleshooting">11. Serial CLI &amp; Tabel Troubleshooting</a>
+    <a class="toc-link" href="#indeks-az" data-target="indeks-az">12. Indeks Kata Kunci &amp; Error (A&ndash;Z)</a>
+  </aside>
+
+  <main class="content" id="wikiMain">
+    <section class="hero-summary">
+      <strong>Ringkasan Cepat Sistem Lapangan (`2026-11-26`)</strong>
+      <div class="hero-grid">
+        <div class="stat-card">
+          <div class="stat-k">Inverter #1 (Aktif)</div>
+          <div class="stat-v">Samoto IHF6200 + 3&times; Shoto (300 Ah)</div>
+          <div class="brand-sub">ID: <code>shoto_ihf6200</code> &middot; CCL 90 A / DCL 120 A</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-k">Inverter #2 (Siap Deploy)</div>
+          <div class="stat-v">Samoto ILS6300 + 2&times; Shoto (200 Ah)</div>
+          <div class="brand-sub">ID: <code>shoto_ils6300</code> &middot; CCL 60 A / DCL 100 A</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-k">Server Home Assistant</div>
+          <div class="stat-v">HAOS VirtualBox Bridged &middot; <code>192.168.10.250</code></div>
+          <div class="brand-sub">Domain: <code>plts.duckdns.org</code> (IP Publik <code>103.122.64.161</code>)</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-k">Prinsip Utama</div>
+          <div class="stat-v">100% Read-Only ke Shoto + Fail-Closed</div>
+          <div class="brand-sub">Tanpa tulis EEPROM, tanpa <code>16&times; 0xAA</code> pada SD-BA430</div>
+        </div>
+      </div>
+    </section>
+
+    <div id="emptyState" class="empty-state">
+      <strong>Tidak ada artikel yang cocok.</strong>
+      <p>Coba kata kunci lain (mis. <code>52.1 V</code>, <code>INHIBIT</code>, <code>04</code>, <code>ILS6300</code>, <code>100 W</code>, <code>Mikrotik</code>, <code>61H</code>) atau klik chip kategori <strong>Semua</strong>.</p>
+    </div>
+
+    <!-- 1. ARSITEKTUR -->
+    <article class="wiki-article" id="arsitektur" data-cat="hardware" data-keywords="arsitektur dual-core freertos core 0 core 1 read-only fail-closed esp32 mqtt haos virtualbox">
+      <div class="art-head">
+        <h2>1. Arsitektur Sistem &amp; Prinsip Keselamatan</h2>
+        <div class="badges"><span class="badge cat">Hardware &amp; Protokol</span><span class="badge">v3.1.0</span></div>
+      </div>
+      <p><strong>Shoto ↔ Samoto Bridge</strong> adalah penerjemah protokol BMS dual-UART berbasis ESP32 FreeRTOS antara bank baterai lithium <strong>Shoto SmartLi / 01-SD-BA430 (15S LFP, 48 V / 100 Ah per pack, tanpa DIP switch)</strong> dan inverter hybrid <strong>Samoto IHF6200 / ILS6300 / ILS3600</strong> memakai protokol <strong>Pylontech LV RS485 (V3.5 &amp; V3.3)</strong>.</p>
+      <div class="callout ok">
+        <span class="callout-title">3 Pilar Keselamatan Wajib</span>
+        <ol>
+          <li><strong>100% Read-Only ke BMS Shoto:</strong> Firmware ESP32 dan Home Assistant tidak pernah menulis ke register/EEPROM Shoto dan tidak pernah mengirim wakeup <code>16&times; 0xAA</code> setelah terkunci di <code>PROTO_TBD_BINARY</code>.</li>
+          <li><strong>Inverter Tetap Prioritas Utama:</strong> Task RS485 inverter berjalan terisolasi di <strong>Core 1</strong> (prioritas <code>3</code>). Jika Wi-Fi, Mosquitto, atau Mini PC HA mati, komunikasi bridge ↔ inverter tetap berjalan normal.</li>
+          <li><strong>Fail-Closed Safety:</strong> Data baterai basi (<code>&gt; 9000 ms</code>), selisih tegangan pack terlalu lebar (<code>&gt; 1.0 V</code>), 0 pack online, atau proteksi kritis memicu <code>INHIBIT</code> (<code>CCL=0 A</code>, <code>DCL=0 A</code>).</li>
+        </ol>
+      </div>
+      <table>
+        <thead><tr><th>Task FreeRTOS</th><th>Core &amp; Prioritas</th><th>Stack</th><th>Tanggung Jawab</th></tr></thead>
+        <tbody>
+          <tr><td><code>bat_poll_task</code></td><td>Core 0 &middot; Prio 2</td><td>6144 B</td><td>Auto-detect, polling RS485 Shoto <code>1..4</code> tiap <code>1500 ms</code>, hot-plug/unplug, <code>aggregate_bank()</code>, &amp; audit EEPROM read-only (<code>params</code>).</td></tr>
+          <tr><td><code>inv_bridge_task</code></td><td>Core 1 &middot; Prio 3</td><td>6144 B</td><td>Pantau <code>InvSerial</code> tiap <code>2 ms</code>, validasi frame <code>~...\r</code>, ambil snapshot <code>g_snap_mutex</code>, kirim balasan <code>60H..63H</code> / <code>42H..92H</code>.</td></tr>
+          <tr><td><code>ha_mqtt_task</code></td><td>Core 0 &middot; Prio 1</td><td>8192 B</td><td>Wi-Fi <code>WIFI_STA</code>, Mosquitto <code>PubSubClient</code> (buffer <code>1600 B</code>), Auto-Discovery <code>212</code> entitas, NVS <code>"shoto_ha"</code>, ArduinoOTA LAN-only.</td></tr>
+          <tr><td><code>loop()</code> / CLI</td><td>Core 1</td><td>Default</td><td>Menjalankan <code>handle_serial_cli()</code> non-blocking pada USB Serial <code>115200 baud</code>.</td></tr>
+        </tbody>
+      </table>
+    </article>
+
+    <!-- 2. DIAGNOSA 52.1V + 0% + ERROR 04 -->
+    <article class="wiki-article" id="error-04-52v-0pct" data-cat="diagnosa" data-keywords="error 04 kode 4 52.1v 52.1 V 0% charge 0 A auto switch PLN solar.siseli.com INHIBIT_CRITICAL INHIBIT_DELTA_V INHIBIT_STALE BMS Communication Normal Kondisi A Kondisi B 3750 mV 2550 mV 2250 mV needle spike PYL 46 V prot_flags 512 1024 65C -10C 299.0 Ah 68.5%">
+      <div class="art-head">
+        <h2>2. Diagnosa Kritis: Auto-Switch ke PLN, <code>solar.siseli.com = 0%</code>, <code>52.1 V</code>, <code>Charge 0 A</code>, <code>Error 04</code></h2>
+        <div class="badges"><span class="badge cat">Diagnosa &amp; Error</span><span class="badge">Terkonfirmasi Live: INHIBIT CRITICAL</span></div>
+      </div>
+      <div class="callout danger">
+        <span class="callout-title">Akar Masalah 100% Terbukti Live (`2026-11-27`): Glitch 1-Sampel <code>Cell UV Prot (prot_flags = 4)</code> &rarr; <code>INHIBIT_CRITICAL</code></span>
+        <ul>
+          <li><strong>Di <code>solar.siseli.com</code> saat auto-switch ke PLN:</strong> <code>battery voltage = 52.1 V</code>, <code>battery capacity = 0%</code>, <code>battery status = charge</code>, <code>battery type = PYL</code>, <code>battery charge current = 0 A</code>, <code>error inverter kode = 4</code>.</li>
+          <li><strong>Di HA View 1 (<code>2026-11-26 21:26 WIB</code>):</strong> <code>Mode Inverter = PYL_FULL</code>, <code>Protokol = TBD_BINARY</code>, <code>Kapasitas = 299.0 Ah</code>, <code>CCL = 90.00 A</code>, <code>DCL = 120.00 A</code>, <code>Raw SOC = 68.5%</code>, <code>Bank Valid = On</code> (sudah pulih), <strong><code>Alasan Inhibit = CRITICAL</code></strong>.</li>
+          <li><strong>Bukti 4 Screenshot Histori HA (`2026-11-27` pagi):</strong> Ketiga pack secara bergantian mengalami lonjakan sesaat ke <strong><code>prot_flags = 4</code></strong> (<code>0x0004</code> = <em>Cell UV Prot</em> <code>min_cell_mv &lt;= 2550 mV</code>) hanya selama <strong>1 siklus poll (~3 detik)</strong> lalu langsung pulih ke <code>0</code>:
+            <ul>
+              <li><strong>Pack 3:</strong> <code>0 &rarr; 4</code> pada <code>03:09:44 AM</code> &rarr; kembali <code>0</code> pada <code>03:09:47 AM</code> (<strong>3 detik</strong>), tepat serentak dengan <code>Bank Inhibit Reason &rarr; CRITICAL</code> (<code>03:09:44 AM</code>).</li>
+              <li><strong>Pack 2:</strong> <code>0 &rarr; 4</code> pada <code>05:35:56 AM</code> &rarr; kembali <code>0</code> pada <code>05:35:59 AM</code> (<strong>3 detik</strong>).</li>
+              <li><strong>Pack 1:</strong> <code>0 &rarr; 4</code> pada <code>06:08:41 AM</code> &rarr; kembali <code>0</code> pada <code>06:08:44 AM</code> (<strong>3 detik</strong>).</li>
+              <li><strong>Grafik <code>Pack 1/2/3 Cell Min</code> (<code>03:09&ndash;06:08 AM</code>):</strong> Ketiga pack sangat sehat &amp; rata lurus di <strong><code>~3.260&ndash;3.290 mV</code></strong> (saat capture <code>3.323&ndash;3.327 mV</code>), lalu muncul <strong>1 jarum vertikal tajam 1-sampel</strong> di <code>~06:04 AM</code> di mana <code>Pack 1 Cell Min</code> jatuh dari <code>~3.265 mV</code> ke <strong><code>~2.250 mV</code></strong> (<code>-1.015 mV</code>) dan langsung kembali ke <code>~3.265 mV</code> sementara Pack 2 &amp; Pack 3 pada bus DC yang sama tetap rata. Penurunan <code>1,015 V</code> ini masih lolos cek keutuhan jumlah sel (<code>&lt; 3,0 V</code> di <code>bridge_protocols.hpp:438</code>), lalu langsung memicu <code>min_cell_mv &lt;= 2550 mV</code> (<code>prot_flags = 4</code>).</li>
+              <li><em>Catatan sekunder:</em> terlihat juga <code>Unavailable</code> singkat pada <code>02:38&ndash;02:39 AM</code> (restart singkat ESP32 yang sempat me-reset <code>Alasan Inhibit</code> ke <code>NONE</code> di <code>02:39:26 AM</code> sebelum <code>Pack 3 = 4</code> pukul <code>03:09:44 AM</code> memicunya lagi) dan reconnect MQTT 10 detik pada <code>09:29:00&ndash;09:29:10 AM</code>.</li>
+            </ul>
+          </li>
+          <li><strong>Mengapa Glitch 3 Detik Ini Mengunci Inverter ke PLN?</strong> Fisik sel LFP <code>100 Ah</code> tidak mungkin drop <code>1 V</code> lalu pulih sempurna 3 detik kemudian di paralel bus yang sama &mdash; ini murni <strong>glitch 1-frame pembacaan AFE/balancing internal Shoto <code>SD-BA430</code></strong>. BMS Shoto sendiri mengabaikan glitch ini karena EEPROM-nya memiliki <em>Cell UV Alarm Delay = <code>3000 ms</code></em> &amp; <em>Cell UV Prot = <code>2000 mV</code></em>, sedangkan firmware ESP32 sebelumnya hanya memiliki retry konfirmasi untuk <code>INHIBIT_DELTA_V</code>, <strong>belum untuk <code>INHIBIT_CRITICAL</code></strong>.</li>
+          <li><strong>Perbaikan Firmware SUDAH DITERAPKAN &amp; TERVERIFIKASI Host (`bat_poll_task` &amp; `bridge_protocols.hpp`):</strong>
+            <ol>
+              <li><strong>Anti-Glitch <code>1&times;</code> Re-Poll Konfirmasi (`shoto_samoto_bridge.ino`):</strong> Saat <code>pack_needs_prot_recheck()</code> mendeteksi <code>prot_flags != 0</code>, <code>critical</code>, atau pembatasan charge/discharge, ESP32 menunggu <code>150 ms</code> lalu mem-poll ulang <strong>hanya slot pack terkait</strong> sebelum memublikasikan status ke <code>g_bank</code>/inverter. Glitch 1-frame AFE tersaring diam-diam dan tercatat pada counter Serial CLI <code>protRetry=OK/FAIL</code> (perintah <code>status</code> / <code>diag</code>).</li>
+              <li><strong><em>Directional OV/UV Protection</em> (`bridge_protocols.hpp`):</strong> Jika kondisi nyata tetap bertahan setelah re-poll, Cell OV (<code>&gt;= 3650 mV</code> soft / <code>&gt;= 3750 mV</code> prot) atau Pack OV (<code>&gt;= 56.5 V</code>) memblokir <strong>Charge saja</strong> (<code>CCL = 0 A</code>, <code>63H = 0x40</code>, tetap izinkan Discharge &amp; kirim SOC asli tanpa <code>Error 04</code>); sedangkan Cell UV (<code>&lt;= 2550 mV</code>) atau Pack UV (<code>&lt;= 40.5 V</code>) memblokir <strong>Discharge saja</strong> (<code>DCL = 0 A</code>, <code>63H = 0x80</code>, tetap izinkan Charge PLN/PV). Gangguan termal ekstrem (<code>OT &gt;= 65 &deg;C</code> / <code>UT &lt;= -10 &deg;C</code>) atau konflik OV+UV tetap memicu <code>INHIBIT_CRITICAL</code> <em>fail-closed</em> penuh. <em>(Catatan: re-flash ESP32 untuk mengaktifkan perbaikan ini secara live.)</em></li>
+            </ol>
+          </li>
+        </ul>
+      </div>
+      <p><strong>Mengapa aturan manual <code>46 V Return To Mains Voltage</code> tidak terpakai?</strong> Karena pada mode <strong><code>Menu 05 = PYL</code></strong>, inverter mengikuti <strong><code>SOC (%)</code> &amp; izin <code>63H</code></strong> dari BMS. Begitu kapasitas terbaca <strong><code>0%</code></strong>, inverter langsung memicu <strong>Error 04</strong>, pindah ke PLN, dan menahan charging <code>0 A</code> &mdash; lalu dapat terkunci di PLN hingga memenuhi <code>BMS Returns To Battery Mode SOC</code> (tercatat <code>90%</code> pada capture Siseli sebelumnya).</p>
+
+      <h3>Dekoder 6 Pemicu <code>INHIBIT_CRITICAL</code> via <code>Bank Prot Flags</code> (<code>bridge_protocols.hpp:456-463</code>)</h3>
+      <p>Pada <code>PROTO_TBD_BINARY</code> Format B, status <code>critical</code> aktif bila nilai <code>prot_flags != 0</code>. Untuk mengetahui pemicu spesifiknya, klik histori <strong><code>Bank Prot Flags</code></strong> (View 1) dan <strong><code>Pack #1/#2/#3 Prot Flags</code></strong> (View 2) pada jam kejadian <code>Error 04</code>:</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Nilai Desimal HA (<code>prot_flags</code>)</th><th>Bit Hex</th><th>Kondisi Pemicu di <code>bridge_protocols.hpp</code></th><th>Ambang Batas Aktif</th></tr></thead>
+          <tbody>
+            <tr><td><strong><code>1</code></strong></td><td><code>0x0001</code></td><td><strong>Cell OV Protection</strong></td><td><code>max_cell_mv &gt;= 3750 mV</code> (1 sel melonjak di zona charging puncak <code>52.1 V</code>)</td></tr>
+            <tr><td><strong><code>2</code></strong></td><td><code>0x0002</code></td><td><strong>Pack OV Protection</strong></td><td><code>bus_v &gt;= 56.5 V</code></td></tr>
+            <tr><td><strong><code>4</code></strong></td><td><code>0x0004</code></td><td><strong>Cell UV Protection</strong></td><td><code>min_cell_mv &lt;= 2550 mV</code> (1 sel drop/glitch bacaan rendah)</td></tr>
+            <tr><td><strong><code>8</code></strong></td><td><code>0x0008</code></td><td><strong>Pack UV Protection</strong></td><td><code>bus_v &lt;= 40.5 V</code></td></tr>
+            <tr><td><strong><code>512</code></strong></td><td><code>0x0200</code></td><td><strong>Over Temperature (OT)</strong></td><td><code>max_temp_c &gt;= 65.0 &deg;C</code></td></tr>
+            <tr><td><strong><code>1024</code></strong></td><td><code>0x0400</code></td><td><strong>Under Temperature (UT)</strong></td><td><code>min_temp_c &lt;= -10.0 &deg;C</code> (mis. saluran sensor suhu <code>0x00</code> &minus; 50 = <code>-50 &deg;C</code>)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><em>(Kombinasi angka desimal seperti <code>5 = 1 + 4</code> menunjukkan lebih dari satu bit aktif bersamaan. Bandingkan juga grafik histori <strong><code>Sel Tertinggi</code></strong>, <strong><code>Sel Terendah</code></strong>, dan <strong><code>Suhu Maks/Min</code></strong> di jam yang sama.)</em></p>
+
+      <h3>Kecocokan 1:1 dengan Jalur Kode Firmware Bridge</h3>
+      <p>Kombinasi <strong><code>52.1 V</code> + <code>0%</code> + <code>charge 0 A</code> + <code>Error 04</code></strong> cocok persis dengan salah satu dari <strong>2 kondisi</strong> berikut:</p>
+
+      <div class="callout warn">
+        <span class="callout-title">Kondisi A &mdash; Firmware ESP32 masuk <code>INHIBIT</code> (<code>bank.core.valid == false</code>)</span>
+        <p>Di <code>bridge_protocols.hpp</code> (baris <code>1250&ndash;1270</code> &amp; <code>1331</code>), saat <code>INHIBIT</code> aktif, bridge <strong>tetap membalas</strong> inverter dengan:</p>
+        <ul>
+          <li><strong><code>61H</code>:</strong> tegangan asli (<strong><code>52.1 V</code></strong>), tetapi <strong><code>SOC = 0%</code></strong> dan arus <strong><code>0 A</code></strong>.</li>
+          <li><strong><code>63H</code>:</strong> <strong><code>CCL = 0 A</code></strong>, <strong><code>DCL = 0 A</code></strong>, <strong><code>Allow Charge = No</code></strong>, <strong><code>Allow Discharge = No</code> (<code>0x00</code>)</strong> &rarr; membuat <code>battery charge current = 0 A</code>.</li>
+          <li><strong><code>62H</code>:</strong> bit <strong><code>System Fault</code></strong> ON (<code>p2 |= 1 &lt;&lt; 3</code>).</li>
+        </ul>
+        <p><strong>Perhatikan tegangan <code>52.1 V</code> (zona puncak LFP 15S):</strong> di zona ini ada <strong>3 pemicu <code>INHIBIT</code> paling mungkin</strong>:</p>
+        <ol>
+          <li><strong><code>INHIBIT_CRITICAL</code></strong> &mdash; ada 1 sel melonjak <strong><code>&gt;= 3750 mV</code></strong> saat charging (<code>bridge_protocols.hpp</code> baris <code>456&ndash;463</code>).</li>
+          <li><strong><code>INHIBIT_DELTA_V</code></strong> &mdash; selisih tegangan antar 3 pack <strong><code>&gt; 1,0 V</code></strong> (misalnya 1 pack lebih dulu penuh / cut-off MOSFET charge).</li>
+          <li><strong><code>INHIBIT_STALE</code></strong> &mdash; salah satu pack gagal dibaca <strong><code>&gt; 9000 ms</code></strong>.</li>
+        </ol>
+      </div>
+
+      <div class="callout">
+        <span class="callout-title">Kondisi B &mdash; Komunikasi RS485 Inverter ↔ ESP32 terputus / timeout (<code>BMS Communication Normal = No</code>)</span>
+        <p>Di mode <code>PYL</code>, bila inverter berhenti menerima balasan <code>61H/63H</code> (mis. <code>Bridge Mode = MONITOR_ONLY</code>, <code>Inv Mutex Miss &gt; 0</code>, kabel RS485 longgar, atau ESP32 reboot brownout), inverter tetap membaca tegangan terminal DC (<strong><code>52.1 V</code></strong>), menjatuhkan <code>battery capacity</code> ke <strong><code>0%</code></strong>, memunculkan <strong>Error 04</strong>, dan menahan <code>charge current = 0 A</code>.</p>
+      </div>
+
+      <h3>Checklist 6 Data Wajib di HA View 4 &amp; Cara Memastikan 100%</h3>
+      <ol>
+        <li><strong>Cek <code>solar.siseli.com</code> (panel BMS Status):</strong> Apakah <code>BMS Communication Normal</code> bernilai <strong><code>Yes</code></strong> (= 100% <strong>Kondisi A</strong>) atau <strong><code>No</code></strong> (= <strong>Kondisi B</strong>)?</li>
+        <li><strong>Status Bank &amp; Mode (HA View 1 / View 4):</strong> <code>Bank Valid</code> (<code>YES</code>/<code>INHIBIT</code>), <code>Bank SOC</code>, <code>Active Packs</code>, <code>Bridge Mode</code> (<code>ACTIVE</code>/<code>MONITOR_ONLY</code>).</li>
+        <li><strong>Diagnostik Timing &amp; Inhibit:</strong> <code>Inhibit Count</code>, <code>Alasan Inhibit</code> (<code>CRITICAL</code>/<code>DELTA_V</code>/<code>STALE</code>), <code>Peak Poll Age (ms)</code>, <code>Peak Pack Delta V (V)</code>, <code>Battery Poll OK/Errors</code>, plus <code>Bank Prot Flags</code> &amp; <code>Cell Max (mV)</code> di zona <code>52.1 V</code>.</li>
+        <li><strong>Diagnostik Sisi Inverter:</strong> <code>Mode Inverter</code> (<code>PYL_FULL</code> vs <code>SCAN_61H_ONLY</code> vs <code>IDLE_OTHER</code>), <code>Inv RX/TX</code>, <code>Inv 61H/62H/63H</code>, <strong><code>Inverter Mutex Miss</code></strong>.</li>
+        <li><strong>Frame TX Terakhir:</strong> <code>Last TX 61H Frame</code> (byte SOC ke-5 payload info: <code>00</code> = <code>0%</code>) &amp; <code>Last TX 63H Frame</code>.</li>
+        <li><strong>Stabilitas Daya ESP32:</strong> Grafik histori <strong><code>Uptime (s)</code></strong> di View 4 (cek apakah sempat jatuh ke <code>0</code> saat jam kejadian) &amp; <code>Wi-Fi RSSI</code>.</li>
+      </ol>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Pola Temuan di HA View 4 / <code>diag</code></th><th>Akar Masalah 100% Terbukti</th><th>Solusi Pasti</th></tr></thead>
+          <tbody>
+            <tr><td><code>Alasan = CRITICAL</code> + <code>Cell Max &gt;= 3750 mV</code> saat <code>52.1 V</code></td><td>1 sel puncak melompat (imbalance top-end) memicu <code>INHIBIT_CRITICAL</code></td><td>Top-balance pack bermasalah / turunkan CVL sementara (mis. <code>52.8&ndash;53.2 V</code>) &amp; kurangi arus charge saat hampir penuh.</td></tr>
+            <tr><td><code>Alasan = DELTA_V</code> (<code>Peak Delta V &gt; 1.0 V</code>)</td><td>1 pack penuh lebih dulu / beda tegangan antar pack paralel &gt; 1 V</td><td>Cek koneksi busbar paralel &amp; seimbangkan pack; cek pembagian arus Pack 1..3 di View 2.</td></tr>
+            <tr><td><code>Alasan = STALE</code> + <code>Peak Poll Age &gt; 9000 ms</code> + <code>Bat Err</code> naik</td><td>Miss timing sisi RS485 baterai melewati freshness <code>9000 ms</code></td><td>Cek cascade RJ45 Shoto &amp; Endloop 120 &Omega;; perbaiki kestabilan poll baterai.</td></tr>
+            <tr><td><strong><code>Inverter Mutex Miss &gt; 0</code></strong></td><td><code>inv_bridge_task</code> gagal ambil <code>g_snap_mutex</code> dalam <code>10 ms</code> saat Core 0 sibuk Wi-Fi/MQTT</td><td>Perpanjang wait mutex / ubah pola lock-free snapshot antara poll, MQTT, dan inverter.</td></tr>
+            <tr><td><code>Bridge Mode = MONITOR_ONLY</code></td><td>ESP32 diset mode intip (NVS/config) sehingga tidak membalas inverter</td><td>Nyalakan <code>Maintenance Unlock</code> di View 4 &rarr; set <code>Bridge Mode = ACTIVE</code>.</td></tr>
+            <tr><td><code>Uptime</code> jatuh ke <code>&lt; 300 s</code> berulang</td><td>ESP32 reboot/brownout saat puncak TX Wi-Fi (<code>250&ndash;400 mA</code>) atau WDT reset</td><td>Pakai adaptor 5 V &ge; 2 A &amp; kabel USB pendek/tebal, atau upgrade ke <code>Waveshare TTL TO RS485 (C)</code> terisolasi.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </article>
+
+    <!-- 3. TIMING BRIDGE -->
+    <article class="wiki-article" id="timing-bridge" data-cat="diagnosa" data-keywords="miss timing inv_bridge_task bat_poll_task ha_mqtt_task freshness 9000ms mutex miss brownout 61H 63H 500ms">
+      <div class="art-head">
+        <h2>3. Audit Timing Module Bridge (`bat_poll`, `inv_bridge`, `ha_mqtt`)</h2>
+        <div class="badges"><span class="badge cat">Diagnosa &amp; Error</span><span class="badge">Code Trace Verified</span></div>
+      </div>
+      <ul>
+        <li><strong>Sisi Inverter (<code>inv_bridge_task</code>, Core 1, Prio 3):</strong> Pada kondisi sehat <strong>tidak ada miss timing</strong>. Poll RS485 dicek tiap <code>2 ms</code>, waktu proses <code>&lt; 6 ms</code> + waktu kirim kabel 9600 baud <code>27&ndash;127 ms</code>, sementara <code>IHF6200</code> mengirim request tiap <code>170&ndash;212 ms</code> (<code>data/ihf6200_raw.log</code>).</li>
+        <li><strong>Siklus Baca 3 Pack (<code>bat_poll_task</code>, Core 0, Prio 2):</strong> Normalnya <code>~2,2&ndash;2,9 detik</code> (<code>POLL_INTERVAL_MS = 1500 ms</code> + 3 pack + 1 probe slot offline <code>320 ms</code> tiap <code>5 detik</code>), masih jauh di bawah batas <code>POLICY_FRESHNESS_MS = 9000 ms</code>.</li>
+        <li><strong>Celah Timing Saat Miss / Gangguan:</strong>
+          <ul>
+            <li>Setiap pack miss pada <code>PROTO_TBD_BINARY</code> menunggu <code>0x7C</code> <code>500 ms</code> + <code>0x7E</code> <code>500 ms</code> = <code>1000 ms</code>. Bila banyak miss beruntun + audit EEPROM <code>params</code>, umur sampel dapat melewati <code>9000 ms</code> &rarr; memicu <code>INHIBIT_STALE</code> (kirim <code>SOC = 0%</code>).</li>
+            <li><code>inv_bridge_task</code> hanya menunggu <code>g_snap_mutex</code> maksimal <strong><code>10 ms</code></strong> (<code>shoto_samoto_bridge.ino:1131</code>). Jika mutex tertahan <code>&gt; 10 ms</code>, reply di-drop dan counter <code>mtxMiss</code> naik.</li>
+            <li>Aktifnya Wi-Fi (<code>ENABLE_HA_MQTT = 1</code>) menambah lonjakan arus TX <code>250&ndash;400 mA</code>; catu daya lemah berisiko brownout reboot <code>~3 detik</code>.</li>
+          </ul>
+        </li>
+      </ul>
+    </article>
+
+    <!-- 4. AUDIT GAP DAYA ±100 W -->
+    <article class="wiki-article" id="audit-gap-daya" data-cat="audit" data-keywords="gap daya 100w ±100 W watt self-consumption efisiensi dc ac shunt offset timing delay lcd inverter">
+      <div class="art-head">
+        <h2>4. Audit Gap Daya Bank <code>&plusmn;100 W</code> &amp; Parameter Lain (HA vs LCD Inverter)</h2>
+        <div class="badges"><span class="badge cat">Audit &amp; Parameter</span><span class="badge">Fisika vs Delay</span></div>
+      </div>
+      <p>Di <code>ha_mqtt_codec.hpp:490</code> dan <code>bridge_protocols.hpp:1181-1183</code>, daya bank HA dihitung langsung dari <strong>terminal DC baterai</strong>: <code>P_HA = V_avg &times; (I_P1 + I_P2 + I_P3)</code>.</p>
+      <div class="callout info">
+        <span class="callout-title">Kesimpulan Audit: Utamanya BUKAN Timing Delay, melainkan Beda Titik Ukur DC vs AC (~60&ndash;120 W)</span>
+        <ol>
+          <li><strong>Titik ukur berbeda (DC baterai vs AC Output Load):</strong> Inverter <code>IHF6200</code> (<code>6,2 kW</code>) memiliki <em>self-consumption</em> sekitar <strong><code>50&ndash;75 W</code></strong> (board kontrol, IGBT/MOSFET, kipas, LCD, dongle Wi-Fi) ditambah rugi konversi DC&rarr;AC <strong><code>~7&ndash;10%</code></strong>. Pada beban AC <code>500 W</code>, baterai menyuplai <code>~598 W</code> (gap ~<code>+98 W</code> di HA saat discharge).</li>
+          <li><strong>Zero-offset shunt paralel 3 pack (<code>&plusmn;20&ndash;50 W</code>):</strong> Penjumlahan toleransi sensor arus masing-masing BMS (mis. <code>&plusmn;0,3 A &times; 3 = &plusmn;0,9 A &times; 50 V &approx; &plusmn;45 W</code>).</li>
+          <li><strong>Timing delay sekunder (<code>~2,5&ndash;5,5 detik</code>):</strong> <code>POLL_INTERVAL_MS = 1500 ms</code> + baca berurutan 3 pack + <code>HA_TELEMETRY_INTERVAL_MS = 3000 ms</code> hanya memberi beda sesaat saat beban baru berubah mendadak; saat beban diam <code>&gt; 15 detik</code>, gap konstan <code>~100 W</code> adalah rugi inverter + shunt (normal).</li>
+        </ol>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Parameter</th><th>Ada Gap?</th><th>Besar Gap Normal</th><th>Penyebab Utama</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Daya Bank (<code>W</code>)</strong></td><td>Ya (selalu)</td><td><code>+60 s/d +150 W</code> (discharge)</td><td>Daya DC baterai vs Load AC inverter + self-consumption + rugi konversi + offset shunt 3 pack.</td></tr>
+            <tr><td><strong>Arus Bank (<code>A</code>)</strong></td><td>Ya (kecil)</td><td><code>&plusmn;0,5 s/d &plusmn;2,0 A</code></td><td>Beda kalibrasi shunt BMS vs sensor inverter + jeda refresh 3&ndash;5 dtk. Bandingkan dengan <em>Battery Current</em> inverter, bukan AC Load.</td></tr>
+            <tr><td><strong>Tegangan Bank (<code>V</code>)</strong></td><td>Ya (kecil)</td><td><code>&plusmn;0,1 s/d &plusmn;0,5 V</code></td><td><em>Voltage drop</em> kabel DC, MCB/fuse, dan busbar + toleransi ADC.</td></tr>
+            <tr><td><strong>SOC (<code>%</code>)</strong></td><td>Tidak (&plusmn;1%)</td><td><code>0&ndash;1%</code></td><td>Sumber identik dari <code>61H</code> (HA 1 desimal, inverter integer). Pengecualian saat <code>INHIBIT</code>: inverter terima <code>0%</code>, HA tampilkan <code>raw_soc</code>.</td></tr>
+            <tr><td><strong>Limit <code>CVL/DVL/CCL/DCL</code></strong></td><td>Tidak</td><td><code>0</code></td><td>Dikirim digital persis lewat frame <code>63H</code> saat <code>PYL</code> &amp; <code>Bank Valid = YES</code>.</td></tr>
+            <tr><td><strong>Sel Min/Max &amp; Suhu</strong></td><td>Tidak</td><td><code>0 mV</code> / <code>&plusmn;0,05 &deg;C</code></td><td>Sama persis dari <code>61H</code> (suhu beda tetap <code>0,05 &deg;C</code> dari offset <code>273,1</code> vs <code>273,15 K</code>).</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </article>
+
+    <!-- 5. POLICY CONFIG.H -->
+    <article class="wiki-article" id="policy-config" data-cat="audit" data-keywords="config.h POLICY_CVL_MAX_V POLICY_DVL_MIN_V 53.6 46.0 CCL DCL 90A 120A MAX_DELTA_V FRESHNESS 9000 return to mains">
+      <div class="art-head">
+        <h2>5. Parameter Safety 24/7 (<code>config.h</code>) &amp; Skala Otomatis 0&ndash;4 Pack</h2>
+        <div class="badges"><span class="badge cat">Audit &amp; Parameter</span><span class="badge">15S LFP Awet</span></div>
+      </div>
+      <p>Apakah <code>POLICY_DVL_MIN_V = 46.0f</code> menyebabkan auto-switch ke PLN di <code>49&ndash;50 V</code>? <strong>Tidak langsung</strong> &mdash; pada <code>52.1 V</code> atau <code>49&ndash;50 V</code>, tegangan masih di atas <code>46.0 V</code>. Auto-switch terjadi karena inverter di mode <code>PYL</code> bereaksi pada <code>SOC = 0%</code> (atau batas SOC menu inverter), bukan karena <code>DVL 46.0 V</code>.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Makro di <code>config.h</code></th><th>Nilai Default</th><th>Fungsi &amp; Pengaruh Nyata</th></tr></thead>
+          <tbody>
+            <tr><td><code>POLICY_USER_APPROVED</code></td><td><code>true</code></td><td>Saklar induk pengaktif izin charge/discharge; jika <code>false</code>, bank selalu <code>INHIBIT</code> (<code>0 A</code>).</td></tr>
+            <tr><td><code>POLICY_CVL_MAX_V</code></td><td><code>53.6f</code> (<code>3,573 V/sel</code>)</td><td><em>Charge Voltage Limit</em> dikirim via <code>63H</code> &mdash; sweet spot 15S LFP awet 24/7 &amp; meminimalkan stress sel.</td></tr>
+            <tr><td><code>POLICY_DVL_MIN_V</code></td><td><code>46.0f</code> (<code>3,067 V/sel</code>)</td><td><em>Discharge Voltage Limit</em> via <code>63H</code> (batas bawah aman 15S LFP sebelum proteksi BMS).</td></tr>
+            <tr><td><code>POLICY_CCL_1PACK_A</code> / <code>DCL_1PACK_A</code></td><td><code>45.0 A</code> / <code>80.0 A</code></td><td>Plafon otomatis saat hanya 1 pack online (uji meja / darurat).</td></tr>
+            <tr><td><code>POLICY_CCL_PER_PACK_A</code> / <code>DCL_PER_PACK_A</code></td><td><code>30.0 A</code> / <code>50.0 A</code></td><td>Pengali saat <code>&gt;= 2</code> pack paralel online (<code>0,30C</code> charge / <code>0,50C</code> discharge &rarr; baterai dingin &amp; awet).</td></tr>
+            <tr><td><code>POLICY_CCL_BANK_MAX_A</code> / <code>DCL_BANK_MAX_A</code></td><td><code>90.0 A</code> / <code>120.0 A</code></td><td>Plafon keras level bank (mencegah DCL <code>150 A / 200 A</code> melebihi rating <code>120 A</code> <code>IHF6200</code>).</td></tr>
+            <tr><td><code>POLICY_MAX_DELTA_V</code></td><td><code>1.0f</code></td><td>Selisih tegangan maks antar pack paralel. Jika dilampaui &rarr; <code>1&times;</code> retry cepat, bila tetap <code>&gt; 1 V</code> &rarr; <code>INHIBIT_DELTA_V</code>.</td></tr>
+            <tr><td><code>POLICY_FRESHNESS_MS</code></td><td><code>9000UL</code></td><td>Batas umur maksimum sampel pack. Bila lewat <code>9 detik</code> &rarr; fail-closed <code>INHIBIT_STALE</code>.</td></tr>
+            <tr><td><code>POLL_INTERVAL_MS</code></td><td><code>1500UL</code></td><td>Interval pembacaan baterai Shoto tiap <code>1,5 detik</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <table>
+        <thead><tr><th>Pack Online</th><th>Kapasitas</th><th>CVL / DVL</th><th>CCL Bank</th><th>DCL Bank</th><th>Target Inverter</th></tr></thead>
+        <tbody>
+          <tr><td><code>0 pack</code></td><td><code>0 Ah</code></td><td>&ndash;</td><td><code>0.0 A</code></td><td><code>0.0 A</code></td><td>Silent (<code>return 0</code>) saat boot / putus total</td></tr>
+          <tr><td><code>1 pack</code></td><td><code>100 Ah</code></td><td><code>53.6 V / 46.0 V</code></td><td><code>45.0 A</code></td><td><code>80.0 A</code></td><td>Bench / single-pack darurat</td></tr>
+          <tr><td><code>2 pack</code></td><td><code>200 Ah</code></td><td><code>53.6 V / 46.0 V</code></td><td><strong><code>60.0 A</code></strong></td><td><strong><code>100.0 A</code></strong></td><td><strong>Samoto ILS6300 / ILS3600 (Setup #2)</strong></td></tr>
+          <tr><td><code>3 pack</code></td><td><code>300 Ah</code></td><td><code>53.6 V / 46.0 V</code></td><td><strong><code>90.0 A</code></strong></td><td><strong><code>120.0 A</code></strong> <em>(capped)</em></td><td><strong>Samoto IHF6200 (Setup #1)</strong></td></tr>
+          <tr><td><code>4 pack</code></td><td><code>400 Ah</code></td><td><code>53.6 V / 46.0 V</code></td><td><code>90.0 A</code> <em>(capped)</em></td><td><code>120.0 A</code> <em>(capped)</em></td><td>Ekspansi maksimal 4 pack</td></tr>
+        </tbody>
+      </table>
+    </article>
+
+    <!-- 6. MULTI INVERTER -->
+    <article class="wiki-article" id="multi-inverter" data-cat="multi" data-keywords="multi-inverter ILS6300 IHF6200 SITE_PROFILE_ILS6300 SITE_PROFILE_IHF6200 2 dashboard terpisah secrets.h platformio">
+      <div class="art-head">
+        <h2>6. Setup Terpisah Inverter #2 (<code>Samoto ILS6300</code> + 2 Pack Shoto) &amp; 2 Dashboard HA</h2>
+        <div class="badges"><span class="badge cat">Multi-Inverter</span><span class="badge">Zero Collision</span></div>
+      </div>
+      <p>Kedua ESP32 menggunakan <strong>broker Mosquitto (<code>192.168.10.250:1883</code>) dan <code>secrets.h</code> yang sama</strong>, namun diisolasi penuh via profil <code>config.h</code> / <code>platformio.ini</code> sehingga seluruh <code>212</code> entitas, topik MQTT, <code>client_id</code>, OTA hostname, otomasi, dan dashboard tidak pernah bertabrakan.</p>
+      <table>
+        <thead><tr><th>Item</th><th>Inverter #1 (<code>IHF6200</code>, 3-Pack)</th><th>Inverter #2 (<code>ILS6300</code>, 2-Pack)</th></tr></thead>
+        <tbody>
+          <tr><td>Macro Profil <code>config.h</code></td><td><code>SITE_PROFILE_IHF6200</code> <em>(default aktif)</em></td><td>Uncomment <code>#define SITE_PROFILE_ILS6300</code></td></tr>
+          <tr><td>PlatformIO Env</td><td><code>diy_esp32_wroom32</code> / <code>waveshare_esp32s3</code></td><td><code>diy_esp32_wroom32_ils6300</code> / <code>waveshare_esp32s3_ils6300</code></td></tr>
+          <tr><td><code>HA_DEVICE_ID</code> &amp; Topik</td><td><code>shoto_ihf6200</code> &middot; <code>shoto_bridge/ihf6200</code></td><td><code>shoto_ils6300</code> &middot; <code>shoto_bridge/ils6300</code></td></tr>
+          <tr><td>Dashboard YAML</td><td><code>homeassistant/dashboards/shoto_bms_dashboard.yaml</code></td><td><code>homeassistant/dashboards/shoto_ils6300_dashboard.yaml</code></td></tr>
+          <tr><td>Otomasi &amp; Script YAML</td><td><code>automations_shoto_bms.yaml</code> &middot; <code>scripts_shoto_bms.yaml</code></td><td><code>automations_shoto_ils6300.yaml</code> &middot; <code>scripts_shoto_ils6300.yaml</code></td></tr>
+        </tbody>
+      </table>
+      <h3>Langkah Pasang 2 Dashboard Terpisah di Sidebar HA</h3>
+      <ol>
+        <li>Pastikan di <strong>Settings &rarr; Devices &amp; Services &rarr; MQTT &rarr; Devices</strong> muncul 2 device terpisah: <code>PLTS Samoto IHF6200</code> dan <code>PLTS Samoto ILS6300</code>.</li>
+        <li>Buka <strong>Settings &rarr; Dashboards &rarr; + Add Dashboard &rarr; New dashboard from scratch</strong>:
+          <ul>
+            <li>Dashboard #1: Title <strong><code>PLTS IHF6200</code></strong>, centang <em>Show in sidebar</em> &rarr; <em>Raw configuration editor</em> &rarr; tempel isi <code>homeassistant/dashboards/shoto_bms_dashboard.yaml</code> &rarr; Save.</li>
+            <li>Dashboard #2: Title <strong><code>PLTS ILS6300</code></strong>, centang <em>Show in sidebar</em> &rarr; <em>Raw configuration editor</em> &rarr; tempel isi <code>homeassistant/dashboards/shoto_ils6300_dashboard.yaml</code> &rarr; Save.</li>
+          </ul>
+        </li>
+        <li>Untuk menjalankan notifikasi otomasi &amp; script kedua inverter bersamaan, salin ke-4 file ke <code>/config/</code> dan tambahkan <em>named include</em> di <code>configuration.yaml</code>:</li>
+      </ol>
+      <div class="code-wrap">
+        <button class="copy-btn" type="button">Copy</button>
+        <pre>automation shoto_ihf6200: !include automations_shoto_bms.yaml
+automation shoto_ils6300: !include automations_shoto_ils6300.yaml
+script shoto_ihf6200: !include scripts_shoto_bms.yaml
+script shoto_ils6300: !include scripts_shoto_ils6300.yaml</pre>
+      </div>
+    </article>
+
+    <!-- 7. HOME ASSISTANT -->
+    <article class="wiki-article" id="home-assistant" data-cat="ha" data-keywords="home assistant mqtt auto-discovery 212 entitas no entity maintenance unlock 300s nvs shoto_ha recorder ssd">
+      <div class="art-head">
+        <h2>7. Home Assistant: <code>212</code> Entitas MQTT, Gate Keamanan &amp; Penyebab <code>No Entity</code></h2>
+        <div class="badges"><span class="badge cat">Home Assistant &amp; MQTT</span><span class="badge">212 Entities / Site</span></div>
+      </div>
+      <ul>
+        <li><strong>Mengapa sempat muncul semua kartu dashboard <code>no entity</code>?</strong> Karena versi awal dashboard memanggil prefix entity <code>*_shoto_ils6300_*</code>, sedangkan ESP32 yang aktif sudah memakai <code>HA_DEVICE_ID = "shoto_ihf6200"</code>. Setelah dashboard diperbarui memakai <code>shoto_ihf6200_*</code>, seluruh 212 entitas langsung cocok 1:1.</li>
+        <li><strong>Struktur <code>212</code> Entitas per Site (<code>ha_mqtt_codec.hpp</code>):</strong> <code>64</code> entitas global + <code>4 &times; 37 = 148</code> entitas per-pack (<code>17</code> status/sel min-max-dV/EEPROM valid + <code>5</code> suhu + <code>15</code> tegangan sel individu), dicetak oleh writer JSON statis <code>snprintf</code> (batas <code>HA_MQTT_MAX_PAYLOAD = 1400 B</code>, bebas heap fragmentation).</li>
+        <li><strong>Keamanan Aksi 2-Langkah:</strong> Kontrol sensitif (<code>Bridge Mode</code>, <code>Dynamic Pack Discovery</code>, slider <code>CVL/DVL/CCL/DCL/Max dV</code>, <code>Reset Policy</code>, <code>Restart ESP32</code>) disembunyikan oleh kartu <code>conditional</code> di View 4 sekaligus <strong>ditolak keras di ESP32 (<code>HA_ACT_DENIED_LOCKED</code>)</strong> jika switch <code>Maintenance Unlock</code> tidak ON (auto-relock <code>300 s</code>). Setting disimpan persisten di NVS namespace <code>"shoto_ha"</code> dengan hard-clamp LFP 15S.</li>
+        <li><strong>Optimasi SSD Mini PC:</strong> <code>configuration.yaml</code> menyetel <code>purge_keep_days: 30</code>, <code>commit_interval: 15</code>, serta mengecualikan frame hex mentah tinggi frekuensi <code>sensor.*_diag_tx61/62/63</code> dari history database.</li>
+      </ul>
+    </article>
+
+    <!-- 8. JARINGAN & MIKROTIK -->
+    <article class="wiki-article" id="jaringan-mikrotik" data-cat="jaringan" data-keywords="mikrotik nat dstnat hotspot bypassed 103.122.64.161 192.168.10.250 plts.duckdns.org virtualbox trusted_proxies 443 80 8123">
+      <div class="art-head">
+        <h2>8. Jaringan Lokal, HAOS VirtualBox, Mikrotik NAT/Hotspot &amp; <code>plts.duckdns.org</code></h2>
+        <div class="badges"><span class="badge cat">Jaringan &amp; Mikrotik</span><span class="badge">Live Topology</span></div>
+      </div>
+      <ul>
+        <li><strong>Topologi Terkonfirmasi:</strong>
+          <ul>
+            <li><strong>IP Publik WAN:</strong> <code>103.122.64.161/32</code> di interface <code>ether5-iforte-jinom</code> (gateway <code>172.66.0.2</code>), domain <code>plts.duckdns.org</code> sudah resolve dan membalas ping (`~10 ms`).</li>
+            <li><strong>Server HA:</strong> Oracle VirtualBox (<em>Bridged Network</em>) IP <strong><code>192.168.10.250</code></strong>, MAC <code>08:00:27:03:D1:B8</code>, Hotspot IP Binding status <strong><code>BYPASSED</code></strong>.</li>
+            <li><strong>Uji Router ke HA:</strong> <code>/tool fetch url="http://192.168.10.250:8123"</code> di Mikrotik menghasilkan <strong><code>status: finished, code: 200</code></strong> (LAN router ↔ VirtualBox HA sehat).</li>
+            <li><strong>ESP32 <code>IHF6200</code>:</strong> Mendapat DHCP di subnet berbeda di belakang Access Point NAT, namun sudah terhubung mulus ke Mosquitto <code>192.168.10.250:1883</code> dan terdeteksi di HA MQTT.</li>
+          </ul>
+        </li>
+        <li><strong>Status Rule NAT Mikrotik (<code>dstnat</code>):</strong>
+          <ul>
+            <li>Rule <code>26</code> (<code>dst-port=443</code> &rarr; <code>192.168.10.250:443</code>) &amp; Rule <code>27</code> (<code>dst-port=80</code> &rarr; <code>192.168.10.250:80</code>): struktur benar (counter paket terus bertambah) selama add-on <strong>Nginx Proxy Manager</strong> sudah terpasang &amp; berjalan di HAOS untuk menerima port <code>80/443</code> dan meneruskan ke <code>192.168.10.250:8123</code> dengan <em>WebSockets Support = ON</em>.</li>
+            <li>Rule <code>28</code> (<code>dst-port=8123</code>): hanya sementara untuk uji; <strong>nonaktifkan dari WAN setelah HTTPS <code>443</code> berjalan</strong> agar login tanpa TLS tidak terekspos. Jangan pernah forward <code>1883</code>, <code>22</code>, <code>81</code>, atau OTA <code>3232</code>.</li>
+          </ul>
+        </li>
+        <li><strong>Checklist jika <code>plts.duckdns.org</code> masih timeout padahal <code>dstnat</code> &amp; <code>fetch :8123</code> sudah <code>200 OK</code>:</strong>
+          <ol>
+            <li>Pastikan HAOS VirtualBox memiliki <strong>Default Gateway = <code>192.168.10.1</code></strong> (bisa cek di <em>HA Settings &rarr; System &rarr; Network</em>) &mdash; tanpa gateway, paket balas ke IP internet tidak tahu jalan keluar meski LAN <code>:8123</code> bisa di-ping dari router.</li>
+            <li>Pastikan add-on <strong>Nginx Proxy Manager</strong> benar-benar mendengarkan port <code>443</code> &amp; <code>80</code> (uji dari Mikrotik: <code>/tool fetch url="http://192.168.10.250:80"</code>).</li>
+            <li>Cek di Mikrotik <code>/ip firewall mangle</code>, <code>/ip firewall raw</code>, dan pastikan akses tes dari jaringan luar (4G/5G) tidak terblokir ISP atau uji Hairpin NAT bila dari LAN.</li>
+            <li>Wajib tambahkan blok <code>http: use_x_forwarded_for: true</code> + <code>trusted_proxies</code> + <code>ip_ban_enabled: true</code> di <code>configuration.yaml</code> agar terhindar dari <code>400 Bad Request</code>.</li>
+          </ol>
+        </li>
+      </ul>
+    </article>
+
+    <!-- 9. HARDWARE & WIRING -->
+    <article class="wiki-article" id="hardware-wiring" data-cat="hardware" data-keywords="pinout RJ45 shoto samoto cascade MOP endloop 120 ohm XY-K485 waveshare ESP32 Dev Module startup.c GPIO12 menu 05 PYL 24 BTT USER">
+      <div class="art-head">
+        <h2>9. Hardware Bridge, Pinout RJ45 Aktual, Cascade MOP &amp; Menu Inverter</h2>
+        <div class="badges"><span class="badge cat">Hardware &amp; Protokol</span><span class="badge">Terbukti Live</span></div>
+      </div>
+      <table>
+        <thead><tr><th>Sisi Koneksi</th><th>Pinout Terbukti Live (T568B)</th><th>Catatan Kritis Lapangan</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Shoto <code>SD-BA430</code></strong> (<code>UART2 TX=17, RX=16</code>)</td><td><code>Pin 1 (Putih-Oranye)</code> = <strong>A+</strong><br><code>Pin 2 (Oranye)</code> = <strong>B-</strong><br><code>Pin 7/8</code> = <strong>CAN H/L (Cascade + Endloop 120 &Omega;)</strong></td><td>Arah resmi MOP Westindo: <code>XY-K485 #1 &rarr; #1 RS485A</code>; <code>#1 RS485B &harr; #2 RS485A</code>; <code>#2 RS485B &harr; #3 RS485A</code>; <strong>Endloop <code>120 &Omega;</code> di <code>RS485B</code> Pack Terakhir</strong> + reboot bersama tombol <code>RESET</code>.</td></tr>
+          <tr><td><strong>Samoto <code>IHF6200</code> / <code>ILS6300</code> / <code>ILS3600</code></strong> (<code>UART1 TX=26, RX=27</code>)</td><td><code>Pin 2 (Oranye)</code> = <strong>A(+)</strong><br><code>Pin 1 (Putih-Oranye)</code> = <strong>B(-)</strong></td><td>Kebalikan urutan pin Shoto! Jangan tertukar dengan kandidat Pin 5/3 dari panduan lama.</td></tr>
+          <tr><td><strong>Menu Inverter Wajib</strong></td><td><strong><code>IHF6200</code>:</strong> <code>Menu 05 = PYL</code><br><strong><code>ILS6300/3600</code>:</strong> <code>24 BTT = USER</code>, <code>25 BnS = On</code>, <code>31 BPO = 0</code></td><td><code>IHF6200</code> mode <code>USE/LIA</code> hanya scan <code>61H</code> + Modbus tanpa meminta <code>62H/63H</code>; hanya <code>PYL</code> yang mengunci <code>PYL_FULL</code>.</td></tr>
+        </tbody>
+      </table>
+      <ul>
+        <li><strong>Fix Boot-Loop Flash ESP32 (<code>startup.c:328</code>):</strong> Gunakan Board <strong><code>ESP32 Dev Module</code></strong> (bukan <code>WROOM-DA</code>), Flash Mode <code>DIO</code>, <code>40 MHz</code>, hindari pull-up pada <code>GPIO12</code>, dan gunakan adaptor <code>5 V 2 A</code> terpisah saat terpasang di panel ber-EMI tinggi.</li>
+        <li><strong>Upgrade Direkomendasikan:</strong> Ganti modul <code>XY-K485</code> non-isolated dengan <code>2&times; Waveshare TTL TO RS485 (C)</code> (isolasi 2500 Vrms, pin GPIO tetap) atau migrasi ke <code>Waveshare ESP32-S3-RS485-CAN</code> (<code>#define BOARD_WAVESHARE_S3</code>).</li>
+      </ul>
+    </article>
+
+    <!-- 10. PROTOKOL & EEPROM -->
+    <article class="wiki-article" id="protokol-eeprom" data-cat="hardware" data-keywords="TBD_BINARY TLV 140B 0xAA tag 0x06 ALA 235 ALA 245 60H 61H 62H 63H 42H EEPROM params cmd 0x43 solar.siseli.com">
+      <div class="art-head">
+        <h2>10. Protokol Shoto <code>TBD_BINARY</code>, Audit EEPROM (13+43) &amp; Pylontech <code>60H..63H</code></h2>
+        <div class="badges"><span class="badge cat">Hardware &amp; Protokol</span><span class="badge">RE &amp; Live Verified</span></div>
+      </div>
+      <ul>
+        <li><strong>TLV Biner 140 Byte (<code>SD-BA430</code>):</strong> Balasan <code>7E &lt;addr&gt; 01 86 ... 0D</code>. <strong>DILARANG mengirim <code>16&times; 0xAA</code></strong> ke unit ini karena memicu balasan rusak (<code>V=15.37V, SOC=2.0%</code>).</li>
+        <li><strong>Tag <code>0x02</code> &amp; Tag <code>0x06</code>:</strong> Arus memakai <code>(30000 - raw) &times; 0.01f</code> (<code>+A = charge</code>, <code>-A = discharge</code>). <code>Tag 0x06 word 1 = 0x0002</code> adalah status discharging normal (dulu keliru dipetakan ke bit Cell-UV menyebabkan <code>ALA 235</code> palsu; sekarang alarm diturunkan dari nilai sel/pack/suhu fisik).</li>
+        <li><strong>Posisi Sel <code>61H</code>:</strong> Memakai encoding desimal <code>pack_id * 100 + cell_num</code> agar <code>solar.siseli.com</code> tampil akurat <code>ID:1(1)</code> &ndash; <code>ID:3(15)</code>.</li>
+        <li><strong>Mengapa <code>Remaining/Nominal Capacity</code> &amp; <code>Cell Voltage 1..16</code> = <code>0</code> di <code>solar.siseli.com</code>?</strong> Karena pada <code>Menu 05 = PYL</code>, <code>IHF6200</code> hanya polling <code>63H &rarr; 61H &rarr; 62H</code> dan tidak pernah mengirim request V3.3 <code>42H</code> (bukan bug bridge; ke-15 sel per pack bisa dipantau penuh via Home Assistant View 2 atau Serial <code>cells</code>).</li>
+        <li><strong>Audit EEPROM Read-Only (<code>params</code> &amp; HA View 3):</strong> Membaca <code>13</code> register proteksi (<code>cmd 0x06..0x50</code>) dan <code>43</code> tag alarm (<code>cmd 0x43</code>, tag <code>0x00..0x2A</code>, offset suhu <code>-50 &deg;C</code>). Parameter terukur Shoto jauh di bawah <code>49&ndash;52 V</code> (Pack UV alarm <code>42 V</code> / cut-off <code>40 V</code> / recovery <code>48 V</code>; Low SOC alarm <code>20%/25%</code>).</li>
+      </ul>
+    </article>
+
+    <!-- 11. CLI & TROUBLESHOOTING -->
+    <article class="wiki-article" id="cli-troubleshooting" data-cat="diagnosa" data-keywords="CLI status diag packs rescan cells celllog raw batraw scan params troubleshooting 400 Bad Request Unavailable">
+      <div class="art-head">
+        <h2>11. Serial Monitor CLI (`115200 baud`) &amp; Tabel Troubleshooting Cepat</h2>
+        <div class="badges"><span class="badge cat">Diagnosa &amp; Error</span><span class="badge">Referensi Cepat</span></div>
+      </div>
+      <table>
+        <thead><tr><th>Perintah Serial CLI</th><th>Fungsi</th></tr></thead>
+        <tbody>
+          <tr><td><code>status</code></td><td>Ringkasan protokol, Bridge Mode, <code>Packs=n/4</code>, <code>BankValid</code>, V/I/SOC/SOH/CVL/DVL/CCL/DCL, &amp; ringkasan <code>Diag:</code> + tiap pack.</td></tr>
+          <tr><td><code>diag</code></td><td>Diagnosa lengkap penyebab <code>INHIBIT</code>, <code>dvRetry</code>, <code>peakDV</code>, <code>peakAge</code>, mode inverter (<code>PYL_FULL</code>), counter <code>60H..63H</code>, <code>mtxMiss</code>, &amp; TX terakhir.</td></tr>
+          <tr><td><code>packs</code> / <code>rescan</code></td><td>Melihat slot <code>#1..#4</code> (<code>ONLINE/OFFLINE</code>, <code>miss</code>, <code>age</code>) / memicu scan ulang seluruh slot.</td></tr>
+          <tr><td><code>cells</code> / <code>celllog</code></td><td>Mencetak tegangan 15 sel (mV) + <code>dV</code> tiap pack / toggle log otomatis tiap 5 detik.</td></tr>
+          <tr><td><code>raw</code> / <code>batraw</code></td><td>Toggle hex mentah UART Inverter / UART Baterai Shoto RS485.</td></tr>
+          <tr><td><code>params [1..4|all]</code></td><td>Audit parameter EEPROM Shoto 100% read-only (<code>cmd 0x06..0x50</code> &amp; <code>0x43</code> + ringkasan 7 parameter).</td></tr>
+        </tbody>
+      </table>
+      <table>
+        <thead><tr><th>Gejala / Kode</th><th>Akar Masalah Umum</th><th>Solusi</th></tr></thead>
+        <tbody>
+          <tr><td><code>Error 04</code> + <code>52.1 V</code> + <code>0%</code> + <code>charge 0 A</code></td><td><code>INHIBIT</code> ESP32 (<code>CRITICAL/DELTA_V/STALE</code>) atau komunikasi <code>PYL</code> putus/reboot</td><td>Ikuti checklist 6-poin di Artikel 2 (cek <code>BMS Comm Normal</code> + HA View 4).</td></tr>
+          <tr><td><code>ALA 245</code></td><td>Komunikasi RS485 inverter putus / kabel Pin 1-2 salah / collision alamat Shoto</td><td>Cek Pin 2=A+, Pin 1=B-, Endloop 120 &Omega; + reboot BMS, <code>Menu 05=PYL</code> / <code>BnS=On</code>.</td></tr>
+          <tr><td><code>ALA 235</code> (pada tegangan aman)</td><td>Status BMS bermasalah atau bit proteksi/low-voltage fault <code>62H</code></td><td>Cek <code>prot</code>/<code>fault</code> di View 2 &amp; View 4; pastikan firmware terbaru terpasang.</td></tr>
+          <tr><td>HA <code>400 Bad Request</code> via domain</td><td>IP reverse proxy belum ada di <code>trusted_proxies</code></td><td>Tambahkan IP/subnet NPM/Caddy &amp; <code>192.168.10.250</code> + <code>use_x_forwarded_for: true</code>.</td></tr>
+          <tr><td>Semua sensor HA <code>Unavailable</code></td><td>Wi-Fi 5 GHz (ESP32 hanya 2.4 GHz) atau kredensial Mosquitto di <code>secrets.h</code> salah</td><td>Cek Serial <code>[HA MQTT]</code>; pastikan SSID 2.4 GHz &amp; user <code>shoto_bridge</code> cocok.</td></tr>
+        </tbody>
+      </table>
+    </article>
+
+    <!-- 12. INDEKS A-Z -->
+    <article class="wiki-article" id="indeks-az" data-cat="audit" data-keywords="indeks index daftar keyword error code 04 235 245 400 0xAA 61H 63H CVL DVL CCL DCL SOC SOH">
+      <div class="art-head">
+        <h2>12. Indeks Kata Kunci, Register &amp; Kode Error (A&ndash;Z)</h2>
+        <div class="badges"><span class="badge cat">Audit &amp; Parameter</span><span class="badge">Navigasi Cepat</span></div>
+      </div>
+      <p>Klik kata kunci di bawah untuk langsung memfilter/melompat ke topik terkait:</p>
+      <div class="kw-grid" id="azKeywords">
+        <a class="kw-pill" href="#protokol-eeprom"><code>0xAA</code> Larangan Wakeup SD-BA430</a>
+        <a class="kw-pill" href="#protokol-eeprom"><code>60H / 61H / 62H / 63H</code> Pylontech V3.5</a>
+        <a class="kw-pill" href="#protokol-eeprom"><code>42H</code> Kenapa Sel 1..16 = 0 di Siseli</a>
+        <a class="kw-pill" href="#error-04-52v-0pct"><code>52.1 V + 0% + Charge 0 A + Error 04</code></a>
+        <a class="kw-pill" href="#audit-gap-daya"><code>&plusmn;100 W</code> Gap Daya HA vs LCD Inverter</a>
+        <a class="kw-pill" href="#hardware-wiring"><code>ALA 235 / ALA 245</code> Alarm Samoto</a>
+        <a class="kw-pill" href="#policy-config"><code>CCL 90 A / DCL 120 A</code> Bank Max Cap</a>
+        <a class="kw-pill" href="#policy-config"><code>CVL 53.6 V / DVL 46.0 V</code> 15S LFP</a>
+        <a class="kw-pill" href="#cli-troubleshooting"><code>diag</code> Perintah Serial Diagnosa</a>
+        <a class="kw-pill" href="#hardware-wiring"><code>Endloop 120 &Omega;</code> Pin 7&harr;8 Shoto</a>
+        <a class="kw-pill" href="#home-assistant"><code>Maintenance Unlock 300s</code> &amp; NVS</a>
+        <a class="kw-pill" href="#timing-bridge"><code>mtxMiss</code> Mutex 10 ms Inverter</a>
+        <a class="kw-pill" href="#home-assistant"><code>no entity</code> Mismatch Prefix IHF vs ILS</a>
+        <a class="kw-pill" href="#jaringan-mikrotik"><code>plts.duckdns.org</code> / <code>103.122.64.161</code></a>
+        <a class="kw-pill" href="#policy-config"><code>POLICY_FRESHNESS_MS = 9000 ms</code></a>
+        <a class="kw-pill" href="#multi-inverter"><code>SITE_PROFILE_ILS6300</code> Setup Inverter #2</a>
+        <a class="kw-pill" href="#error-04-52v-0pct"><code>INHIBIT_CRITICAL (&gt;=3750 mV) / DELTA_V / STALE</code></a>
+        <a class="kw-pill" href="#error-04-52v-0pct"><code>prot_flags (1/2/4/8/512/1024)</code> Dekoder <code>CRITICAL</code></a>
+        <a class="kw-pill" href="#jaringan-mikrotik"><code>VirtualBox Bridged 192.168.10.250</code></a>
+      </div>
+    </article>
+  </main>
+</div>
+
+<footer class="wiki-footer">
+  Wiki offline mandiri proyek <strong>shoto_samoto_bridge</strong> &middot; Sumber teknis sinkron dengan
+  <a href="PROJECT_CONTEXT.md">PROJECT_CONTEXT.md</a>,
+  <a href="GUIDE-HOME-ASSISTANT.md">GUIDE-HOME-ASSISTANT.md</a>, dan
+  <a href="GLOSSARY.md">GLOSSARY.md</a>. Tanpa dependensi internet (aman dibuka langsung via <code>file://</code>).
+</footer>
+
+<script>
+(function () {
+  var searchInput = document.getElementById("wikiSearch");
+  var clearBtn = document.getElementById("clearSearch");
+  var matchStat = document.getElementById("matchStat");
+  var emptyState = document.getElementById("emptyState");
+  var chipsWrap = document.getElementById("categoryChips");
+  var sidebar = document.getElementById("wikiSidebar");
+  var toggleTocBtn = document.getElementById("toggleToc");
+  var toggleThemeBtn = document.getElementById("toggleTheme");
+  var articles = Array.prototype.slice.call(document.querySelectorAll("article.wiki-article"));
+  var tocLinks = Array.prototype.slice.call(document.querySelectorAll(".toc-link"));
+  var chips = Array.prototype.slice.call(chipsWrap.querySelectorAll(".chip"));
+
+  var activeCat = "all";
+
+  // Theme initialization
+  try {
+    var savedTheme = localStorage.getItem("shoto_wiki_theme");
+    if (savedTheme === "dark") {
+      document.documentElement.setAttribute("data-theme", "dark");
+    }
+  } catch (e) {}
+
+  toggleThemeBtn.addEventListener("click", function () {
+    var isDark = document.documentElement.getAttribute("data-theme") === "dark";
+    if (isDark) {
+      document.documentElement.removeAttribute("data-theme");
+    } else {
+      document.documentElement.setAttribute("data-theme", "dark");
+    }
+    try {
+      localStorage.setItem("shoto_wiki_theme", isDark ? "light" : "dark");
+    } catch (e) {}
+  });
+
+  toggleTocBtn.addEventListener("click", function () {
+    sidebar.classList.toggle("open");
+  });
+
+  // Copy buttons for pre blocks
+  var copyBtns = document.querySelectorAll(".copy-btn");
+  for (var i = 0; i < copyBtns.length; i++) {
+    copyBtns[i].addEventListener("click", function (ev) {
+      var btn = ev.currentTarget;
+      var pre = btn.parentElement.querySelector("pre");
+      if (!pre) return;
+      var text = pre.textContent || "";
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () {
+          btn.textContent = "Tersalin!";
+          setTimeout(function () { btn.textContent = "Copy"; }, 1200);
+        });
+      }
+    });
+  }
+
+  function removeHighlights(root) {
+    var marks = root.querySelectorAll("mark.wiki-hl");
+    for (var i = 0; i < marks.length; i++) {
+      var m = marks[i];
+      var parent = m.parentNode;
+      if (!parent) continue;
+      parent.replaceChild(document.createTextNode(m.textContent), m);
+      parent.normalize();
+    }
+  }
+
+  function escapeRegex(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function highlightTerms(root, terms) {
+    if (!terms.length) return;
+    var pattern = new RegExp("(" + terms.map(escapeRegex).join("|") + ")", "gi");
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (node) {
+        if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+        var p = node.parentElement;
+        if (!p) return NodeFilter.FILTER_REJECT;
+        var tag = p.tagName;
+        if (tag === "SCRIPT" || tag === "STYLE" || tag === "MARK" || tag === "BUTTON") {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    var textNodes = [];
+    while (walker.nextNode()) {
+      textNodes.push(walker.currentNode);
+    }
+    for (var i = 0; i < textNodes.length; i++) {
+      var tn = textNodes[i];
+      var val = tn.nodeValue;
+      pattern.lastIndex = 0;
+      if (!pattern.test(val)) continue;
+      pattern.lastIndex = 0;
+      var frag = document.createDocumentFragment();
+      var lastIdx = 0;
+      var match;
+      while ((match = pattern.exec(val)) !== null) {
+        if (match.index > lastIdx) {
+          frag.appendChild(document.createTextNode(val.slice(lastIdx, match.index)));
+        }
+        var mk = document.createElement("mark");
+        mk.className = "wiki-hl";
+        mk.textContent = match[0];
+        frag.appendChild(mk);
+        lastIdx = pattern.lastIndex;
+      }
+      if (lastIdx < val.length) {
+        frag.appendChild(document.createTextNode(val.slice(lastIdx)));
+      }
+      tn.parentNode.replaceChild(frag, tn);
+    }
+  }
+
+  function applyFilter() {
+    var rawQuery = (searchInput.value || "").trim();
+    clearBtn.classList.toggle("visible", rawQuery.length > 0);
+    var terms = rawQuery ? rawQuery.toLowerCase().split(/\s+/).filter(Boolean) : [];
+    var visibleCount = 0;
+    var visibleMap = {};
+
+    for (var i = 0; i < articles.length; i++) {
+      var art = articles[i];
+      removeHighlights(art);
+      var cat = art.getAttribute("data-cat") || "";
+      var catOk = (activeCat === "all") || (cat === activeCat);
+      var haystack = ((art.getAttribute("data-keywords") || "") + " " + (art.textContent || "")).toLowerCase();
+      var queryOk = true;
+      for (var t = 0; t < terms.length; t++) {
+        if (haystack.indexOf(terms[t]) === -1) {
+          queryOk = false;
+          break;
+        }
+      }
+      var show = catOk && queryOk;
+      art.classList.toggle("hidden", !show);
+      visibleMap[art.id] = show;
+      if (show) {
+        visibleCount++;
+        if (terms.length) highlightTerms(art, terms);
+      }
+    }
+
+    for (var j = 0; j < tocLinks.length; j++) {
+      var link = tocLinks[j];
+      var targetId = link.getAttribute("data-target");
+      link.classList.toggle("hidden", !visibleMap[targetId]);
+    }
+
+    matchStat.textContent = "Menampilkan " + visibleCount + " dari " + articles.length + " artikel";
+    emptyState.classList.toggle("visible", visibleCount === 0);
+  }
+
+  chipsWrap.addEventListener("click", function (ev) {
+    var btn = ev.target.closest(".chip");
+    if (!btn) return;
+    activeCat = btn.getAttribute("data-cat") || "all";
+    for (var i = 0; i < chips.length; i++) {
+      chips[i].classList.toggle("active", chips[i] === btn);
+    }
+    applyFilter();
+  });
+
+  searchInput.addEventListener("input", applyFilter);
+  clearBtn.addEventListener("click", function () {
+    searchInput.value = "";
+    applyFilter();
+    searchInput.focus();
+  });
+
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "/" && document.activeElement !== searchInput) {
+      ev.preventDefault();
+      searchInput.focus();
+      searchInput.select();
+    } else if (ev.key === "Escape" && (searchInput.value || document.activeElement === searchInput)) {
+      searchInput.value = "";
+      applyFilter();
+      searchInput.blur();
+    }
+  });
+
+  // Close mobile sidebar after clicking link
+  for (var k = 0; k < tocLinks.length; k++) {
+    tocLinks[k].addEventListener("click", function () {
+      sidebar.classList.remove("open");
+    });
+  }
+
+  // Highlight active TOC item on scroll
+  function updateActiveToc() {
+    var bestId = null;
+    var bestTop = Infinity;
+    for (var i = 0; i < articles.length; i++) {
+      var art = articles[i];
+      if (art.classList.contains("hidden")) continue;
+      var rect = art.getBoundingClientRect();
+      if (rect.bottom > 130 && rect.top < bestTop) {
+        bestTop = rect.top;
+        bestId = art.id;
+      }
+    }
+    for (var j = 0; j < tocLinks.length; j++) {
+      var ln = tocLinks[j];
+      ln.classList.toggle("active", ln.getAttribute("data-target") === bestId);
+    }
+  }
+  window.addEventListener("scroll", updateActiveToc, { passive: true });
+  updateActiveToc();
+})();
+</script>
+</body>
+</html>

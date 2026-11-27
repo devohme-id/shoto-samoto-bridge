@@ -281,7 +281,7 @@
           Bridge ESP32 berstatus unavailable selama lebih dari 2 menit (cek daya ESP32, Wi-Fi, atau broker MQTT).
           {% else %}
           Counter frame 63H inverter ({{ states('sensor.shoto_ihf6200_diag_inv_63') }}) tidak bertambah lebih dari 120 detik
-          saat mode inverter {{ states('sensor.shoto_ihf6200_diag_inv_mode') }}. Periksa kabel RS485 ke Samoto ILS6300!
+          saat mode inverter {{ states('sensor.shoto_ihf6200_diag_inv_mode') }}. Periksa kabel RS485 ke Samoto IHF6200!
           {% endif %}
           SOC terakhir: {{ states('sensor.shoto_ihf6200_bank_soc') }} % |
           Delta V: {{ states('sensor.shoto_ihf6200_bank_cell_dv_mv') }} mV |

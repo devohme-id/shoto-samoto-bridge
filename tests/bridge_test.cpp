@@ -863,6 +863,158 @@ int main() {
         assert(snap.valid && snap.prot.const_chg_cv == 5200 && snap.prot.sleep_time_min == 60);
     }
 
-    std::cout << "ALL 11 C++17 bridge protocol & safety suites PASS\n";
+    // 12) Directional OV/UV protection & anti-glitch recheck helper (SD-BA430 140B TLV)
+    {
+        const uint8_t tlv_base[140] = {
+            0x7e,0x01,0x01,0x86,
+            0x01,0x0f,0x0d,0x08,0x0d,0x06,0x0d,0x05,0x0d,0x06,0x0d,0x07,0x0d,0x05,0x0d,0x07,
+            0x0d,0x07,0x0d,0x06,0x0d,0x06,0x0d,0x07,0x0d,0x08,0x0d,0x08,0x0d,0x07,0x0d,0x06,
+            0x02,0x01,0x75,0x30,0x03,0x01,0x20,0xe6,0x04,0x01,0x27,0x10,0x05,0x08,0x00,0x54,
+            0x00,0x54,0x00,0x54,0x00,0x54,0x20,0x57,0x20,0x55,0x20,0x54,0x20,0x54,0x06,0x05,
+            0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x07,0x01,0x00,0x05,0x08,0x01,
+            0x13,0x8b,0x09,0x01,0x27,0x10,0x0a,0x01,0x00,0x00,0x0b,0x01,0x00,0x00,0x01,0xe9,
+            0x0c,0x01,0x00,0x00,0x01,0xd4,0x0d,0x01,0x00,0x02,0xf6,0x70,0x0e,0x01,0x00,0x02,
+            0xb2,0x00,0x0f,0x01,0x00,0x00,0x61,0xcd,0x10,0x01,0x00,0x00,0x5c,0xca,0x11,0x01,
+            0x13,0x8d,0x12,0x01,0x00,0x00,0xec,0x0d
+        };
+        PolicyLimits lim{};
+        Policy pol{};
+        pol.approved = true;
+        pol.freshness_ms = 9000;
+        pol.max_delta_v = 1.0f;
+        pol.charge_cap = 90.0f;
+        pol.discharge_cap = 120.0f;
+        char out[256];
+
+        // 12a. Healthy baseline pack does NOT need prot recheck
+        PackState p_ok{};
+        assert(parse_tbd_binary_resp(tlv_base, sizeof(tlv_base), 1, 10000, lim, p_ok));
+        assert(!pack_needs_prot_recheck(p_ok));
+        assert(p_ok.core.allow_charge && p_ok.core.allow_discharge && !p_ok.core.critical);
+
+        // 12b. Single-cell 2250mV UV needle spike -> blocks discharge ONLY, keeps charge & real SOC, flags recheck
+        uint8_t tlv_uv[sizeof(tlv_base)];
+        std::memcpy(tlv_uv, tlv_base, sizeof(tlv_base));
+        tlv_uv[6] = 0x08; tlv_uv[7] = 0xCA; // cell 1 = 2250 mV
+        tlv_uv[sizeof(tlv_uv) - 2] = tbd_checksum(tlv_uv, sizeof(tlv_uv) - 2);
+        PackState p_uv{};
+        assert(parse_tbd_binary_resp(tlv_uv, sizeof(tlv_uv), 1, 10000, lim, p_uv));
+        assert(p_uv.ext.prot_flags == 0x0004u);
+        assert(!p_uv.core.critical);
+        assert(p_uv.core.allow_charge);
+        assert(!p_uv.core.allow_discharge);
+        assert(pack_needs_prot_recheck(p_uv));
+
+        uint8_t tlv_p2[sizeof(tlv_base)];
+        std::memcpy(tlv_p2, tlv_base, sizeof(tlv_base));
+        tlv_p2[1] = 0x02;
+        tlv_p2[sizeof(tlv_p2) - 2] = tbd_checksum(tlv_p2, sizeof(tlv_p2) - 2);
+        PackState p2{};
+        assert(parse_tbd_binary_resp(tlv_p2, sizeof(tlv_p2), 2, 10000, lim, p2));
+        uint8_t tlv_p3[sizeof(tlv_base)];
+        std::memcpy(tlv_p3, tlv_base, sizeof(tlv_base));
+        tlv_p3[1] = 0x03;
+        tlv_p3[sizeof(tlv_p3) - 2] = tbd_checksum(tlv_p3, sizeof(tlv_p3) - 2);
+        PackState p3{};
+        assert(parse_tbd_binary_resp(tlv_p3, sizeof(tlv_p3), 3, 10000, lim, p3));
+        PackState bank_uv_packs[3] = {p_uv, p2, p3};
+        BankExt b_uv{};
+        assert(aggregate_bank(bank_uv_packs, 3, 10100, pol, b_uv));
+        assert(classify_bank_inhibit(bank_uv_packs, 3, 10100, pol) == INHIBIT_NONE);
+        assert(b_uv.core.valid && b_uv.core.charge && !b_uv.core.discharge);
+        assert(b_uv.core.ccl > 0.0f && b_uv.core.dcl == 0.0f);
+        assert(std::fabs(b_uv.core.soc - 84.22f) < 0.1f);
+
+        size_t o63_uv = handle_pylontech_request("~200246630000FDA9\r", 18, b_uv, out, sizeof(out));
+        assert(o63_uv > 0 && verify_ydt_checksum(out, o63_uv));
+        // 63H ends with allow status 0x80 (Allow Charge=Yes, Allow Discharge=No) before 4-hex checksum + '\r'
+        assert(std::strncmp(out + o63_uv - 7, "80", 2) == 0);
+        size_t o61_uv = handle_pylontech_request("~200246610000FDAB\r", 18, b_uv, out, sizeof(out));
+        assert(o61_uv > 18 && verify_ydt_checksum(out, o61_uv));
+        auto info61_uv = from_hex(std::string(out + 13, o61_uv - 18).c_str());
+        assert(info61_uv.size() == 49 && info61_uv[4] == 84u); // real SOC preserved (NOT 0%)
+        size_t o62_uv = handle_pylontech_request("~200246620000FDAA\r", 18, b_uv, out, sizeof(out));
+        assert(o62_uv > 0 && verify_ydt_checksum(out, o62_uv));
+        assert(std::strncmp(out + 13, "10001000", 8) == 0); // p1 Cell UV prot (0x10), p2 NO System Fault (0x00)
+
+        // 12c. Single-cell soft OV (3660mV) & hard OV (3760mV) -> blocks charge ONLY, keeps discharge & real SOC
+        uint8_t tlv_sov[sizeof(tlv_base)];
+        std::memcpy(tlv_sov, tlv_base, sizeof(tlv_base));
+        tlv_sov[6] = 0x0E; tlv_sov[7] = 0x4C; // 3660 mV
+        tlv_sov[sizeof(tlv_sov) - 2] = tbd_checksum(tlv_sov, sizeof(tlv_sov) - 2);
+        PackState p_sov{};
+        assert(parse_tbd_binary_resp(tlv_sov, sizeof(tlv_sov), 1, 10000, lim, p_sov));
+        assert((p_sov.ext.warn_flags & 0x0001u) != 0u && p_sov.ext.prot_flags == 0u);
+        assert(!p_sov.core.critical && !p_sov.core.allow_charge && p_sov.core.allow_discharge);
+        assert(pack_needs_prot_recheck(p_sov));
+
+        uint8_t tlv_ov[sizeof(tlv_base)];
+        std::memcpy(tlv_ov, tlv_base, sizeof(tlv_base));
+        tlv_ov[6] = 0x0E; tlv_ov[7] = 0xB0; // 3760 mV
+        tlv_ov[sizeof(tlv_ov) - 2] = tbd_checksum(tlv_ov, sizeof(tlv_ov) - 2);
+        PackState p_ov{};
+        assert(parse_tbd_binary_resp(tlv_ov, sizeof(tlv_ov), 1, 10000, lim, p_ov));
+        assert((p_ov.ext.prot_flags & 0x0001u) != 0u);
+        assert(!p_ov.core.critical && !p_ov.core.allow_charge && p_ov.core.allow_discharge);
+        assert(pack_needs_prot_recheck(p_ov));
+
+        PackState bank_ov_packs[3] = {p_ov, p2, p3};
+        BankExt b_ov{};
+        assert(aggregate_bank(bank_ov_packs, 3, 10100, pol, b_ov));
+        assert(b_ov.core.valid && !b_ov.core.charge && b_ov.core.discharge);
+        assert(b_ov.core.ccl == 0.0f && b_ov.core.dcl > 0.0f);
+        assert(std::fabs(b_ov.core.soc - 84.22f) < 0.1f);
+        size_t o63_ov = handle_pylontech_request("~200246630000FDA9\r", 18, b_ov, out, sizeof(out));
+        assert(o63_ov > 0 && verify_ydt_checksum(out, o63_ov));
+        assert(std::strncmp(out + o63_ov - 7, "40", 2) == 0); // 0x40 = Allow Charge=No, Allow Discharge=Yes
+        size_t o61_ov = handle_pylontech_request("~200246610000FDAB\r", 18, b_ov, out, sizeof(out));
+        assert(o61_ov > 18 && verify_ydt_checksum(out, o61_ov));
+        auto info61_ov = from_hex(std::string(out + 13, o61_ov - 18).c_str());
+        assert(info61_ov.size() == 49 && info61_ov[4] == 84u);
+        size_t o62_ov = handle_pylontech_request("~200246620000FDAA\r", 18, b_ov, out, sizeof(out));
+        assert(o62_ov > 0 && verify_ydt_checksum(out, o62_ov));
+        assert(std::strncmp(out + 13, "20002000", 8) == 0); // a1=0x20 p1=0x20 p2=0x00 (NO System Fault)
+
+        // 12d. Extreme thermal fault (OT 66C / UT -15C) & contradictory OV+UV MUST stay fail-closed CRITICAL
+        uint8_t tlv_ot[sizeof(tlv_base)];
+        std::memcpy(tlv_ot, tlv_base, sizeof(tlv_base));
+        tlv_ot[59] = 0x74; // 116 - 50 = 66 C (>= 65C)
+        tlv_ot[sizeof(tlv_ot) - 2] = tbd_checksum(tlv_ot, sizeof(tlv_ot) - 2);
+        PackState p_ot{};
+        assert(parse_tbd_binary_resp(tlv_ot, sizeof(tlv_ot), 1, 10000, lim, p_ot));
+        assert(p_ot.ext.prot_flags == 0x0200u && p_ot.core.critical);
+        assert(!p_ot.core.allow_charge && !p_ot.core.allow_discharge);
+        assert(pack_needs_prot_recheck(p_ot));
+
+        PackState bank_ot_packs[3] = {p_ot, p2, p3};
+        BankExt b_ot{};
+        assert(!aggregate_bank(bank_ot_packs, 3, 10100, pol, b_ot));
+        assert(classify_bank_inhibit(bank_ot_packs, 3, 10100, pol) == INHIBIT_CRITICAL);
+        assert(!b_ot.core.valid && b_ot.core.ccl == 0.0f && b_ot.core.dcl == 0.0f);
+        size_t o63_ot = handle_pylontech_request("~200246630000FDA9\r", 18, b_ot, out, sizeof(out));
+        assert(o63_ot > 0 && std::strncmp(out + o63_ot - 7, "00", 2) == 0);
+        size_t o62_ot = handle_pylontech_request("~200246620000FDAA\r", 18, b_ot, out, sizeof(out));
+        assert(o62_ot > 0 && std::strncmp(out + 13, "08000808", 8) == 0); // p2 = 0x08 System Fault
+
+        uint8_t tlv_ut[sizeof(tlv_base)];
+        std::memcpy(tlv_ut, tlv_base, sizeof(tlv_base));
+        tlv_ut[51] = 0x23; // 35 - 50 = -15 C (<= -10C)
+        tlv_ut[sizeof(tlv_ut) - 2] = tbd_checksum(tlv_ut, sizeof(tlv_ut) - 2);
+        PackState p_ut{};
+        assert(parse_tbd_binary_resp(tlv_ut, sizeof(tlv_ut), 1, 10000, lim, p_ut));
+        assert(p_ut.ext.prot_flags == 0x0400u && p_ut.core.critical);
+
+        uint8_t tlv_ovuv[sizeof(tlv_base)];
+        std::memcpy(tlv_ovuv, tlv_base, sizeof(tlv_base));
+        tlv_ovuv[6] = 0x0E; tlv_ovuv[7] = 0xB0; // cell 1 = 3760 mV
+        tlv_ovuv[8] = 0x08; tlv_ovuv[9] = 0xCA; // cell 2 = 2250 mV
+        tlv_ovuv[sizeof(tlv_ovuv) - 2] = tbd_checksum(tlv_ovuv, sizeof(tlv_ovuv) - 2);
+        PackState p_ovuv{};
+        assert(parse_tbd_binary_resp(tlv_ovuv, sizeof(tlv_ovuv), 1, 10000, lim, p_ovuv));
+        assert(p_ovuv.ext.prot_flags == 0x0005u && p_ovuv.core.critical);
+        assert(!p_ovuv.core.allow_charge && !p_ovuv.core.allow_discharge);
+    }
+
+    std::cout << "ALL 12 C++17 bridge protocol & safety suites PASS\n";
     return 0;
 }

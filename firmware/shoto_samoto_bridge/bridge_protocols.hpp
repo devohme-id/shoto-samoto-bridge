@@ -460,9 +460,14 @@ inline bool parse_tbd_binary_resp(
             if (st.ext.temp_count > 0 && st.ext.max_temp_c >= 65.0f) st.ext.prot_flags |= 0x0200u; // OT prot
             if (st.ext.temp_count > 0 && st.ext.min_temp_c <= -10.0f) st.ext.prot_flags |= 0x0400u; // UT prot
 
-            st.core.critical = (st.ext.prot_flags != 0);
-            st.core.allow_charge = !st.core.critical;
-            st.core.allow_discharge = !st.core.critical;
+            // Directional OV/UV protection: OV blocks charge only, UV blocks discharge only;
+            // only severe thermal fault or contradictory OV+UV triggers full critical INHIBIT.
+            const bool ov_prot = (st.ext.prot_flags & 0x0003u) != 0u;
+            const bool uv_prot = (st.ext.prot_flags & 0x000Cu) != 0u;
+            const bool temp_prot = (st.ext.prot_flags & 0x0600u) != 0u;
+            st.core.critical = temp_prot || (ov_prot && uv_prot);
+            st.core.allow_charge = !st.core.critical && !ov_prot && (st.ext.max_cell_mv < 3650u);
+            st.core.allow_discharge = !st.core.critical && !uv_prot;
             st.core.identity_verified = (st.ext.cell_count > 0);
             st.core.limits_verified = true;
             st.core.complete = (st.core.bus_v > 0.0f && st.ext.cell_count > 0);
@@ -976,6 +981,11 @@ inline const char* inhibit_reason_name(InhibitReason r) {
         case INHIBIT_DELTA_V:    return "DELTA_V";
         default:                 return "UNKNOWN";
     }
+}
+
+inline bool pack_needs_prot_recheck(const PackState& p) {
+    return (p.ext.prot_flags != 0u) || p.core.critical ||
+           !p.core.allow_charge || !p.core.allow_discharge;
 }
 
 inline InhibitReason classify_bank_inhibit(

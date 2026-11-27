@@ -94,6 +94,8 @@ static uint32_t g_last_inv_rx_ms = 0;
 static uint32_t g_inhibit_count = 0;
 static uint32_t g_delta_v_retry_ok = 0;
 static uint32_t g_delta_v_retry_fail = 0;
+static uint32_t g_prot_retry_ok = 0;
+static uint32_t g_prot_retry_fail = 0;
 static InhibitReason g_last_inhibit_reason = INHIBIT_NONE;
 static uint32_t g_last_inhibit_ms = 0;
 static float g_last_inhibit_dv = 0.0f;
@@ -953,6 +955,75 @@ static void bat_poll_task(void* arg) {
             uint32_t cur_age = 0u;
             InhibitReason reason = classify_bank_inhibit(active_packs, active_count, now_agg, pol, &cur_dv, &cur_age);
 
+            bool did_prot_retry = false;
+            bool prot_retry_recovered = false;
+            uint8_t prot_slots[MAX_PACKS] = {};
+            size_t prot_slot_count = 0u;
+            uint16_t prot_mask_log = 0u;
+            uint16_t prot_min_cell_log = 65535u;
+            uint16_t prot_max_cell_log = 0u;
+            for (size_t i = 0; i < active_count; ++i) {
+                if (pack_needs_prot_recheck(active_packs[i])) {
+                    prot_slots[prot_slot_count++] = active_slots[i];
+                    prot_mask_log |= active_packs[i].ext.prot_flags;
+                    if (active_packs[i].ext.min_cell_mv > 0u && active_packs[i].ext.min_cell_mv < prot_min_cell_log) {
+                        prot_min_cell_log = active_packs[i].ext.min_cell_mv;
+                    }
+                    if (active_packs[i].ext.max_cell_mv > prot_max_cell_log) {
+                        prot_max_cell_log = active_packs[i].ext.max_cell_mv;
+                    }
+                }
+            }
+            if (prot_slot_count > 0u) {
+                Serial.printf("[RETRY] Transient prot/limit on %u pack(s) (prot=0x%04X, minC=%umV, maxC=%umV) -> re-polling...\n",
+                              static_cast<unsigned>(prot_slot_count),
+                              static_cast<unsigned>(prot_mask_log),
+                              static_cast<unsigned>(prot_min_cell_log == 65535u ? 0u : prot_min_cell_log),
+                              static_cast<unsigned>(prot_max_cell_log));
+                esp_task_wdt_reset();
+                vTaskDelay(pdMS_TO_TICKS(150));
+                for (size_t i = 0; i < prot_slot_count; ++i) {
+                    uint8_t slot = prot_slots[i];
+                    esp_task_wdt_reset();
+                    PackState fresh{};
+                    if (poll_single_pack(g_active_proto, g_pack_addrs[slot], lim, fresh, 0)) {
+                        g_bat_poll_ok.fetch_add(1u, std::memory_order_relaxed);
+                        if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+                            g_packs[slot] = fresh;
+                            g_pack_online[slot] = true;
+                            g_pack_miss[slot] = 0;
+                            xSemaphoreGive(g_snap_mutex);
+                        }
+                    } else {
+                        g_bat_poll_fail.fetch_add(1u, std::memory_order_relaxed);
+                    }
+                    if (i + 1u < prot_slot_count) {
+                        vTaskDelay(pdMS_TO_TICKS(15));
+                    }
+                }
+                if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+                    active_count = collect_active_packs(active_packs, active_slots);
+                    xSemaphoreGive(g_snap_mutex);
+                }
+                compute_dynamic_caps(active_count, dyn_lim, pol.charge_cap, pol.discharge_cap);
+                now_agg = millis();
+                cand_bank = BankExt{};
+                aggregate_bank(active_packs, active_count, now_agg, pol, cand_bank);
+                reason = classify_bank_inhibit(active_packs, active_count, now_agg, pol, &cur_dv, &cur_age);
+                did_prot_retry = true;
+                prot_retry_recovered = cand_bank.core.valid && (cand_bank.prot_flags == 0u) &&
+                                       cand_bank.core.charge && cand_bank.core.discharge;
+                if (prot_retry_recovered) {
+                    Serial.println("[RETRY] Transient prot/limit cleared (recovered)");
+                } else {
+                    Serial.printf("[RETRY] Protection/limit confirmed (valid=%s prot=0x%04X chg=%u dis=%u)\n",
+                                  cand_bank.core.valid ? "YES" : "NO",
+                                  static_cast<unsigned>(cand_bank.prot_flags),
+                                  cand_bank.core.charge ? 1u : 0u,
+                                  cand_bank.core.discharge ? 1u : 0u);
+                }
+            }
+
             bool did_dv_retry = false;
             bool dv_retry_recovered = false;
             if (!cand_bank.core.valid && reason == INHIBIT_DELTA_V && active_count >= 2u) {
@@ -992,6 +1063,10 @@ static void bat_poll_task(void* arg) {
             uint32_t inh_num = 0;
             if (xSemaphoreTake(g_snap_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
                 g_bank = cand_bank;
+                if (did_prot_retry) {
+                    if (prot_retry_recovered) g_prot_retry_ok++;
+                    else g_prot_retry_fail++;
+                }
                 if (did_dv_retry) {
                     if (dv_retry_recovered) g_delta_v_retry_ok++;
                     else g_delta_v_retry_fail++;
@@ -1211,6 +1286,8 @@ static void reset_diag_counters() {
         g_inhibit_count = 0u;
         g_delta_v_retry_ok = 0u;
         g_delta_v_retry_fail = 0u;
+        g_prot_retry_ok = 0u;
+        g_prot_retry_fail = 0u;
         g_last_inhibit_reason = INHIBIT_NONE;
         g_last_inhibit_ms = 0u;
         g_last_inhibit_dv = 0.0f;
@@ -1766,6 +1843,8 @@ static void handle_serial_cli() {
                 uint32_t inhibit_count;
                 uint32_t dv_retry_ok;
                 uint32_t dv_retry_fail;
+                uint32_t prot_retry_ok;
+                uint32_t prot_retry_fail;
                 InhibitReason last_inhibit_reason;
                 uint32_t last_inhibit_ms;
                 float last_inhibit_dv;
@@ -1799,6 +1878,8 @@ static void handle_serial_cli() {
                 dsnap.inhibit_count = g_inhibit_count;
                 dsnap.dv_retry_ok = g_delta_v_retry_ok;
                 dsnap.dv_retry_fail = g_delta_v_retry_fail;
+                dsnap.prot_retry_ok = g_prot_retry_ok;
+                dsnap.prot_retry_fail = g_prot_retry_fail;
                 dsnap.last_inhibit_reason = g_last_inhibit_reason;
                 dsnap.last_inhibit_ms = g_last_inhibit_ms;
                 dsnap.last_inhibit_dv = g_last_inhibit_dv;
@@ -1838,11 +1919,13 @@ static void handle_serial_cli() {
                               static_cast<unsigned long>(g_bat_poll_ok.load(std::memory_order_relaxed)),
                               static_cast<unsigned long>(g_bat_poll_fail.load(std::memory_order_relaxed)),
                               snap.min_cell_mv, snap.max_cell_mv);
-                Serial.printf("Diag: inhibit=%lu (last=%s dV=%.2fV age=%lums) dvRetry=%lu/%lu peakDV=%.2fV peakAge=%lums | INV 60=%lu 61=%lu 62=%lu 63=%lu oth=%lu mtxMiss=%lu\n",
+                Serial.printf("Diag: inhibit=%lu (last=%s dV=%.2fV age=%lums) protRetry=%lu/%lu dvRetry=%lu/%lu peakDV=%.2fV peakAge=%lums | INV 60=%lu 61=%lu 62=%lu 63=%lu oth=%lu mtxMiss=%lu\n",
                               static_cast<unsigned long>(dsnap.inhibit_count),
                               inhibit_reason_name(dsnap.last_inhibit_reason),
                               dsnap.last_inhibit_dv,
                               static_cast<unsigned long>(dsnap.last_inhibit_age_ms),
+                              static_cast<unsigned long>(dsnap.prot_retry_ok),
+                              static_cast<unsigned long>(dsnap.prot_retry_fail),
                               static_cast<unsigned long>(dsnap.dv_retry_ok),
                               static_cast<unsigned long>(dsnap.dv_retry_fail),
                               dsnap.peak_dv,
@@ -1868,7 +1951,7 @@ static void handle_serial_cli() {
                 const char* inv_mode = (dsnap.inv_63 > 0u && dsnap.inv_62 > 0u)
                     ? "PYL_FULL (63H+61H+62H)"
                     : ((dsnap.inv_61 > 0u && dsnap.inv_63 == 0u) ? "SCAN_61H_ONLY (USE/LIA)" : "IDLE/OTHER");
-                Serial.printf("[DIAG BANK] valid=%s packs=%u/%u inhibit=%lu (last=%s @-%lums dV=%.2fV age=%lums) dvRetry=%lu/%lu peakDV=%.2fV peakAge=%lums bat_ok=%lu bat_err=%lu\n",
+                Serial.printf("[DIAG BANK] valid=%s packs=%u/%u inhibit=%lu (last=%s @-%lums dV=%.2fV age=%lums) protRetry=%lu/%lu dvRetry=%lu/%lu peakDV=%.2fV peakAge=%lums bat_ok=%lu bat_err=%lu\n",
                               snap.core.valid ? "YES" : "INHIBIT",
                               snap.pack_count, static_cast<unsigned>(MAX_PACKS),
                               static_cast<unsigned long>(dsnap.inhibit_count),
@@ -1876,6 +1959,8 @@ static void handle_serial_cli() {
                               static_cast<unsigned long>(age_since_ms(now_cli, dsnap.last_inhibit_ms)),
                               dsnap.last_inhibit_dv,
                               static_cast<unsigned long>(dsnap.last_inhibit_age_ms),
+                              static_cast<unsigned long>(dsnap.prot_retry_ok),
+                              static_cast<unsigned long>(dsnap.prot_retry_fail),
                               static_cast<unsigned long>(dsnap.dv_retry_ok),
                               static_cast<unsigned long>(dsnap.dv_retry_fail),
                               dsnap.peak_dv,

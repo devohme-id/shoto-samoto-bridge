@@ -74,17 +74,37 @@
 // 6. INTEGRASI HOME ASSISTANT (MQTT + Wi-Fi + NVS):
 //    - ENABLE_HA_MQTT = 0 -> Mode bench/offline murni (tidak butuh PubSubClient/secrets.h)
 //    - ENABLE_HA_MQTT = 1 -> Aktifkan task non-blocking ha_mqtt_task (Core 0, prio 1)
+//
+//    Pilih PROFIL UNIT INVERTER (aktifkan SALAH SATU saat flash di Arduino IDE;
+//    untuk PlatformIO, pilih env *_ihf6200 atau *_ils6300 di platformio.ini):
+#ifndef SITE_PROFILE_ILS6300
+  #define SITE_PROFILE_IHF6200   // Inverter #1: Samoto IHF6200 (default aktif, 3-pack)
+#endif
+// #define SITE_PROFILE_ILS6300  // Inverter #2: Samoto ILS6300 (2-pack saat ini, uncomment untuk flash ESP32 #2)
+
 #ifndef ENABLE_HA_MQTT
   #define ENABLE_HA_MQTT             1
 #endif
-#ifndef HA_DEVICE_ID
-  #define HA_DEVICE_ID               "shoto_ihf6200"
-#endif
-#ifndef HA_SITE_NAME
-  #define HA_SITE_NAME               "PLTS Samoto IHF6200"
-#endif
-#ifndef MQTT_TOPIC_PREFIX
-  #define MQTT_TOPIC_PREFIX          "shoto_bridge/ihf6200"
+#ifndef SITE_PROFILE_ILS6300
+  #ifndef HA_DEVICE_ID
+    #define HA_DEVICE_ID             "shoto_ihf6200"
+  #endif
+  #ifndef HA_SITE_NAME
+    #define HA_SITE_NAME             "PLTS Samoto IHF6200"
+  #endif
+  #ifndef MQTT_TOPIC_PREFIX
+    #define MQTT_TOPIC_PREFIX        "shoto_bridge/ihf6200"
+  #endif
+#else
+  #ifndef HA_DEVICE_ID
+    #define HA_DEVICE_ID             "shoto_ils6300"
+  #endif
+  #ifndef HA_SITE_NAME
+    #define HA_SITE_NAME             "PLTS Samoto ILS6300"
+  #endif
+  #ifndef MQTT_TOPIC_PREFIX
+    #define MQTT_TOPIC_PREFIX        "shoto_bridge/ils6300"
+  #endif
 #endif
 #ifndef HA_TELEMETRY_INTERVAL_MS
   #define HA_TELEMETRY_INTERVAL_MS   3000UL

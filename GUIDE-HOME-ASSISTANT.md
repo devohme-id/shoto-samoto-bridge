@@ -162,28 +162,47 @@ Gunakan opsi ini **hanya jika** Mini PC sudah menjalankan Ubuntu/Debian untuk ap
    ```
    *(File `secrets.h` otomatis diabaikan oleh `.gitignore` sehingga kredensial Wi-Fi/MQTT Anda tidak akan ikut ter-upload ke Git.)*
 
-### 2. Aktifkan Mode Home Assistant di `config.h`
-Buka [config.h](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/config.h) dan ubah baris konfigurasi HA menjadi:
-```cpp
-#define ENABLE_HA_MQTT        1
-#define HA_DEVICE_ID          "shoto_ihf6200"         // Unik per unit (mis. `"shoto_ils6300"` saat menambah unit ke-2 nanti)
-#define HA_SITE_NAME          "PLTS Samoto IHF6200"   // Nama tampilan di Home Assistant
-#define MQTT_TOPIC_PREFIX     "shoto_bridge/ihf6200"
-```
+### 2. Aktifkan Profil Unit & Mode Home Assistant di `config.h`
+Buka [config.h](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/config.h). Cukup pilih **profil unit inverter** sebelum klik Upload:
+
+- **Untuk ESP32 #1 — Samoto IHF6200 (default aktif, 3-pack):** biarkan default apa adanya (`SITE_PROFILE_IHF6200` aktif):
+  ```cpp
+  #ifndef SITE_PROFILE_ILS6300
+    #define SITE_PROFILE_IHF6200   // Inverter #1: Samoto IHF6200 (default aktif)
+  #endif
+  // #define SITE_PROFILE_ILS6300
+  ```
+  Menghasilkan: `HA_DEVICE_ID = "shoto_ihf6200"`, `HA_SITE_NAME = "PLTS Samoto IHF6200"`, `MQTT_TOPIC_PREFIX = "shoto_bridge/ihf6200"`.
+
+- **Untuk ESP32 #2 — Samoto ILS6300 (2-pack Shoto BMS saat ini):** cukup buka komentar baris `#define SITE_PROFILE_ILS6300`:
+  ```cpp
+  #define SITE_PROFILE_ILS6300  // Inverter #2: Samoto ILS6300
+  ```
+  Menghasilkan: `HA_DEVICE_ID = "shoto_ils6300"`, `HA_SITE_NAME = "PLTS Samoto ILS6300"`, `MQTT_TOPIC_PREFIX = "shoto_bridge/ils6300"`.
 
 > [!IMPORTANT]
-> Jika Anda memiliki lebih dari 1 sistem inverter/ESP32 (misalnya 1 di **ILS6300** dan 1 di **IHF6200**), cukup bedakan `HA_DEVICE_ID` & `MQTT_TOPIC_PREFIX` untuk masing-masing ESP32 agar keduanya tampil rapi dalam 1 dashboard Mini PC tanpa bentrok!
+> **Kedua ESP32 berbagi broker Mosquitto & file `secrets.h` yang sama persis tanpa bentrok!**  
+> Karena `client_id` MQTT (`shoto_ihf6200_esp32` vs `shoto_ils6300_esp32`), `MQTT_TOPIC_PREFIX` (`shoto_bridge/ihf6200` vs `shoto_bridge/ils6300`), hostname OTA, serta seluruh **`212` Entity ID** di Home Assistant otomatis terisolasi per profil.
+>
+> **Catatan Setup Inverter #2 (`ILS6300` + 2 Pack Shoto BMS):**
+> - Dengan `DYNAMIC_PACK_DISCOVERY = true`, bridge otomatis mendeteksi **2 pack online (`200 Ah`)** dan mengirim limit aman `CVL = 53.6 V`, `DVL = 46.0 V`, `CCL = 60.0 A` (`30 A/pack`), `DCL = 100.0 A` (`50 A/pack`), serta otomatis naik jika kelak ditambah ke 3–4 pack.
+> - Di sisi kabel & menu `ILS6300`: pastikan port BMS RS485 memakai **`Pin 2 (Oranye) = A(+)`**, **`Pin 1 (Putih-Oranye) = B(-)`**, serta menu **`24 BTT = USER`**, **`25 BnS = On`**, **`31 BPO = 0`**.
 
 ### 3. Install Library & Flash Firmware
 - **Jika memakai Arduino IDE 2.x:**
   1. Buka **Library Manager** (`Ctrl+Shift+I` / `Cmd+Shift+I`), cari **`PubSubClient`** by Nick O'Leary → **Install**.
   2. Buka [shoto_samoto_bridge.ino](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino).
-  3. Pilih Board `ESP32 Dev Module` *(atau `ESP32S3 Dev Module` jika pakai Waveshare S3)* dan Port USB ESP32 → klik **Upload**.
-- **Jika memakai PlatformIO:**
+  3. Untuk ESP32 #1 (`IHF6200`) biarkan `config.h` default; untuk ESP32 #2 (`ILS6300`) uncomment `#define SITE_PROFILE_ILS6300`.
+  4. Pilih Board `ESP32 Dev Module` *(atau `ESP32S3 Dev Module` jika pakai Waveshare S3)* dan Port USB ESP32 → klik **Upload**.
+- **Jika memakai PlatformIO (tidak perlu edit `config.h`):**
   ```bash
   cd firmware/shoto_samoto_bridge
+  # Flash Inverter #1 (IHF6200):
   pio run -e diy_esp32_wroom32 -t upload
+  # Flash Inverter #2 (ILS6300):
+  pio run -e diy_esp32_wroom32_ils6300 -t upload
   ```
+  *(Untuk board Waveshare ESP32-S3, ganti `diy_esp32_wroom32` menjadi `waveshare_esp32s3` atau `waveshare_esp32s3_ils6300`.)*
 
 ### 4. Verifikasi Awal di Serial Monitor (`115200 baud`)
 Pastikan baris berikut muncul tanpa error:
@@ -197,14 +216,42 @@ Pastikan baris berikut muncul tanpa error:
 
 ## Bab 6: Setup Dashboard Lengkap & Function Action Menu
 
-Begitu ESP32 terhubung ke Mosquitto, buka **Settings → Devices & Services → MQTT → Devices → `PLTS Samoto IHF6200`**. Seluruh sensor, parameter EEPROM, dan kontrol sudah terdaftar otomatis!
+Begitu masing-masing ESP32 terhubung ke Mosquitto, buka **Settings → Devices & Services → MQTT → Devices**. Akan muncul 2 device terpisah otomatis:
+- **`PLTS Samoto IHF6200`** (seluruh entity `*_shoto_ihf6200_*`)
+- **`PLTS Samoto ILS6300`** (seluruh entity `*_shoto_ils6300_*`)
 
-### Memasang Dashboard 4 Tampilan (*4-View Dashboard*)
-1. Di Home Assistant, buka **Settings → Dashboards → + Add Dashboard → New dashboard from scratch**.
-2. Beri judul: `Shoto BMS & Inverter` (ikon `mdi:battery-charging-high`) → **Create**.
-3. Buka dashboard baru tersebut → klik ikon **Pensil (Edit)** di pojok kanan atas → klik ikon **titik tiga** di kanan atas → **Raw configuration editor**.
-4. Salin seluruh isi file `homeassistant/dashboards/shoto_bms_dashboard.yaml` lalu tempelkan ke editor → klik **Save** → **Done**.
-5. Pasang juga file otomasi notifikasi dari `homeassistant/automations_shoto_bms.yaml` dan script dari `homeassistant/scripts_shoto_bms.yaml`.
+### Memasang 2 Dashboard Terpisah (*Multi-Inverter Sidebar Dashboards*)
+
+Agar monitoring **IHF6200** dan **ILS6300** terpisah rapi di menu sidebar Home Assistant (masing-masing punya 4 view lengkap dan kontrol `Maintenance Unlock` sendiri):
+
+1. **Buat Dashboard #1 — Inverter `IHF6200`:**
+   - Buka **Settings → Dashboards → + Add Dashboard → New dashboard from scratch**.
+   - Isi **Title:** `PLTS IHF6200`, **Icon:** `mdi:battery-charging-high`, URL slug (mis. `shoto-ihf6200`), centang **Show in sidebar** → **Create**.
+   - Buka dashboard `PLTS IHF6200` → klik ikon **Pensil (Edit)** di pojok kanan atas → klik ikon **titik tiga (`⋮`)** → **Raw configuration editor**.
+   - Hapus isi default, salin seluruh isi [shoto_bms_dashboard.yaml](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/homeassistant/dashboards/shoto_bms_dashboard.yaml) → tempelkan → klik **Save** → **Done**.
+
+2. **Buat Dashboard #2 — Inverter `ILS6300`:**
+   - Ulangi **Settings → Dashboards → + Add Dashboard → New dashboard from scratch**.
+   - Isi **Title:** `PLTS ILS6300`, **Icon:** `mdi:solar-power`, URL slug (mis. `shoto-ils6300`), centang **Show in sidebar** → **Create**.
+   - Buka dashboard `PLTS ILS6300` → ikon **Pensil (Edit)** → **titik tiga (`⋮`)** → **Raw configuration editor**.
+   - Salin seluruh isi [shoto_ils6300_dashboard.yaml](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/homeassistant/dashboards/shoto_ils6300_dashboard.yaml) → tempelkan → klik **Save** → **Done**.
+
+3. **Pasang Otomasi & Script Kedua Inverter Secara Bersamaan (Tanpa Bentrok):**
+   Seluruh ID otomasi, alias, `notification_id`, dan nama script antara IHF6200 dan ILS6300 sudah dipisah total:
+   - **Cara cepat lewat File Editor / Studio Code di `/config/`:**
+     Salin 4 file berikut dari folder `homeassistant/` ke `/config/` di Home Assistant:
+     - [automations_shoto_bms.yaml](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/homeassistant/automations_shoto_bms.yaml) *(IHF6200)*
+     - [automations_shoto_ils6300.yaml](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/homeassistant/automations_shoto_ils6300.yaml) *(ILS6300)*
+     - [scripts_shoto_bms.yaml](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/homeassistant/scripts_shoto_bms.yaml) *(IHF6200)*
+     - [scripts_shoto_ils6300.yaml](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/homeassistant/scripts_shoto_ils6300.yaml) *(ILS6300)*
+     Lalu tambahkan baris *named include* ini di `/config/configuration.yaml`:
+     ```yaml
+     automation shoto_ihf6200: !include automations_shoto_bms.yaml
+     automation shoto_ils6300: !include automations_shoto_ils6300.yaml
+     script shoto_ihf6200: !include scripts_shoto_bms.yaml
+     script shoto_ils6300: !include scripts_shoto_ils6300.yaml
+     ```
+     Terakhir buka **Developer Tools → Check Configuration** (pastikan hijau/valid) → **Restart Home Assistant**.
 
 ### Daftar Lengkap Parameter yang Tampil
 
@@ -339,3 +386,96 @@ Install aplikasi **Home Assistant** dari Play Store / App Store di HP Anda:
 | Semua sensor Shoto di HA bertuliskan **`Unavailable`** | ESP32 belum terhubung ke Wi-Fi 2.4 GHz atau user/password Mosquitto salah | Cek Serial Monitor ESP32 (`115200 baud`): lihat pesan `[HA MQTT]`. Pastikan SSID Wi-Fi adalah **2.4 GHz** (bukan 5 GHz saja) dan user `shoto_bridge` cocok. |
 | WebSocket error / dashboard di IP Publik muter terus tidak mau load | **WebSockets Support** di Nginx Proxy Manager belum dicentang | Edit Proxy Host di NPM → aktifkan **Websockets Support = ON** → Save. |
 | Terkunci sendiri dari HP saat salah ketik password | Fitur `ip_ban_enabled: true` memblokir IP setelah 5× gagal | Buka `/config/ip_bans.yaml` dari terminal/File Editor di LAN, hapus entri IP terkait, lalu restart Home Assistant. |
+
+---
+
+### Prosedur Diagnosa 100%: Issue Auto-Switch ke PLN & Inverter Membaca `Battery = 0%` (Faktor Firmware ESP32)
+
+> **Konteks:** Pada kondisi sehat, `inv_bridge_task` (`Core 1`, prioritas `3`) membalas request inverter `63H`/`61H`/`62H` dalam `< 6 ms` waktu proses (`< 127 ms` total wire time 9600 baud), masih di dalam window jeda polling `IHF6200` (`170–212 ms`). Namun apabila inverter menampilkan **`Battery = 0%`** dan **auto-switch ke PLN** (meski tegangan baterai masih `49–50 V` > batas manual `46 V`), terdapat **3 mekanisme di firmware/sistem** yang dapat memicunya:
+> 1. **`INHIBIT` Aktif (`bank.core.valid == false`):** Bridge tetap membalas inverter, tetapi mengirim **`SOC = 0%`** pada frame `61H`, **`CCL = 0 A / DCL = 0 A / Allow Discharge = No (0x00)`** pada `63H`, dan bit **`System Fault`** pada `62H`. Begitu terjadi walau sesaat (`1–2 detik`), inverter berpindah ke PLN dan dapat **terkunci di PLN** hingga memenuhi batas *Return To Battery* inverter. Pemicu timing sisi baterai: `INHIBIT_STALE` (`> 9000 ms` akibat beberapa kali timeout `2 × 500 ms` per pack + poll/audit EEPROM), `INHIBIT_DELTA_V` (`> 1.0 V` setelah `1×` retry), atau `INHIBIT_CRITICAL`.
+> 2. **Balasan Diam / Ter-drop (`return 0`):** Bridge sengaja diam bila `Bridge Mode = MONITOR_ONLY` (atau tersimpan di NVS), `Packs = 0/4`, terjadi `Inv Mutex Miss > 0` (mutex `g_snap_mutex` tertahan `> 10 ms` di Core 0 ketika Wi-Fi/MQTT sibuk), kabel RS485 inverter longgar/terbalik, atau setting Menu inverter bukan `PYL` (`IHF6200`) / `BTT=USER + BnS=On` (`ILS6300`).
+> 3. **ESP32 Reboot Sesaat (Brownout / WDT):** Aktifnya radio Wi-Fi `ENABLE_HA_MQTT = 1` menaikkan lonjakan arus TX (`250–400 mA`) + beban `2× XY-K485`; adaptor/kabel 5 V yang lemah memicu reset berulang (`Uptime` kecil) sehingga komunikasi ke inverter putus `~3 detik` tiap restart.
+
+#### 6 Data Wajib Diambil Saat Kejadian Terulang (HA View 4 atau Serial `diag` + `status` + `packs`)
+Catat atau screenshot **6 kelompok nilai berikut** dari **View 4: *Action Center & Diagnostics*** pada dashboard HA terkait (atau jalankan `diag` + `status` di Serial Monitor `115200 baud`):
+1. **Status Bank & Mode:** `Bank Valid` (`YES`/`INHIBIT`), `Bank SOC`, `Active Packs` (`?/4`), `Bridge Mode` (`ACTIVE`/`MONITOR_ONLY`).
+2. **Diagnostik Timing & Inhibit:** `Inhibit Count`, `Alasan Inhibit` (`NONE`/`STALE`/`DELTA_V`/`CRITICAL`/`NO_PACKS`), `Peak Poll Age (ms)`, `Peak Pack Delta V (V)`, `Battery Poll OK` vs `Battery Poll Errors`.
+3. **Diagnostik Sisi Inverter:** `Mode Inverter` (`PYL_FULL` / `SCAN_61H_ONLY` / `IDLE_OTHER`), `Inverter RX Count` vs `Inverter TX Count`, `Inv 61H / 62H / 63H`, **`Inverter Mutex Miss`**.
+4. **Frame TX Terakhir:** **`Last TX 61H Frame`** dan **`Last TX 63H Frame`** *(byte hex SOC di frame `61H` menunjukkan apakah ESP32 benar-benar mengirim literal `00` = `0%` atau SOC normal)*.
+5. **Stabilitas Daya ESP32:** **`Uptime (s)`** dan **`Wi-Fi RSSI`** *(uptime yang kembali kecil menandakan reboot/brownout)*.
+6. **Observasi Inverter:** Apakah angka `0%` di LCD inverter **terus-menerus** atau **normal lalu mendadak drop ke `0%` sesaat** saat pindah ke PLN, serta pastikan `Menu 05 = PYL` (`IHF6200`) / `Menu 24=USER, 25=On, 31=0` (`ILS6300`).
+
+#### Studi Kasus Lapangan: Kecocokan 1:1 Data `solar.siseli.com` (`52.1 V` + `0%` + `Charge 0 A` + `Error 04`)
+
+> **Snapshot `solar.siseli.com` saat `IHF6200` pindah ke PLN:**
+> - `battery voltage` = **`52.1 V`** *(~3,47 V/sel pada 15S LFP — baterai dalam kondisi hampir penuh, bukan kosong)*
+> - `battery capacity` = **`0%`**
+> - `battery status` = **`charge`**
+> - `battery type` = **`PYL`**
+> - `battery charge current` = **`0 A`**
+> - `error inverter kode` = **`4`** (*Low Battery / Undervoltage* — dipicu oleh bacaan `0%` di mode `PYL` meski tegangan masih `52.1 V` > batas manual `46 V`)
+>
+> **Kecocokan 1:1 dengan Jalur Kode Firmware Bridge:** Kombinasi **`52.1 V` + `0%` + `charge 0 A` + `Error 04`** cocok persis dengan salah satu dari **2 kondisi** berikut:
+>
+> 1. **Kondisi A — Firmware ESP32 masuk `INHIBIT` (`bank.core.valid == false`)**
+>    Di [`bridge_protocols.hpp`](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/bridge_protocols.hpp#L1250-L1270), saat `INHIBIT` aktif, bridge **tetap membalas** inverter dengan:
+>    - **`61H`:** tegangan asli (**`52.1 V`**), tetapi **`SOC = 0%`** dan arus **`0 A`**.
+>    - **`63H`:** **`CCL = 0 A`**, **`DCL = 0 A`**, **`Allow Charge = No`**, **`Allow Discharge = No` (`0x00`)** → membuat `battery charge current = 0 A`.
+>    - **`62H`:** bit **`System Fault`** ON.
+>    - **Perhatikan tegangan `52.1 V` (zona puncak LFP 15S):** di zona ini ada **3 pemicu `INHIBIT` paling mungkin**:
+>      - **`INHIBIT_CRITICAL`** — ada 1 sel melonjak **`>= 3750 mV`** saat charging ([`bridge_protocols.hpp`](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/bridge_protocols.hpp#L456-L463)).
+>      - **`INHIBIT_DELTA_V`** — selisih tegangan antar 3 pack **`> 1,0 V`** (misalnya 1 pack lebih dulu penuh / cut-off MOSFET charge).
+>      - **`INHIBIT_STALE`** — salah satu pack gagal dibaca **`> 9000 ms`**.
+> 2. **Kondisi B — Komunikasi RS485 Inverter ↔ ESP32 terputus / timeout (`BMS Communication Normal = No`)**
+>    Di mode **`PYL`**, bila inverter berhenti menerima balasan `61H/63H` (mis. `Bridge Mode = MONITOR_ONLY`, `Inv Mutex Miss > 0`, kabel RS485 longgar, atau ESP32 reboot brownout), inverter tetap membaca tegangan terminal DC (**`52.1 V`**), menjatuhkan `battery capacity` ke **`0%`**, memunculkan **Error `04`**, dan menahan `charge current = 0 A`.
+>
+> **Cara membedakan Kond. A vs Kond. B dalam 30 detik:**
+> - Cek panel *BMS Status* di `solar.siseli.com` saat kejadian: **`BMS Communication Normal = Yes`** berarti **100% Kondisi A (`INHIBIT` ESP32)**; **`No`** berarti **Kondisi B (putus komunikasi / reboot ESP32)**.
+> - Buka **HA View 4** (`PLTS IHF6200`) untuk melihat counter pastinya: `Inhibit Count` & `Alasan Inhibit` (`CRITICAL` / `DELTA_V` / `STALE`), `Peak Poll Age (ms)`, `Peak Pack Delta V (V)`, `Bank Prot Flags` & `Cell Max (mV)` di zona `52.1 V`, `Inverter Mutex Miss`, `Battery Poll Errors`, serta grafik **`Uptime`** (cek apakah sempat jatuh ke `0`).
+>
+> **Pembuktian Live (`2026-11-26` & `2026-11-27`):**
+> 1. Tangkapan layar dashboard HA `PLTS IHF6200` (`2026-11-26 21:26 WIB`) membuktikan **`Alasan Inhibit = CRITICAL`** (**Kondisi A 100% terkonfirmasi**).
+> 2. **Akar Masalah Terbukti dari 4 Screenshot Histori HA (`2026-11-27` pagi):** Pemicu `INHIBIT_CRITICAL` **bukan** Cell OV saat charging `52.1 V`, melainkan **glitch 1-sampel `prot_flags = 4` (`0x0004` = *Cell UV Prot* `min_cell_mv <= 2550 mV`)** selama **1 siklus poll (~3 detik)** lalu langsung kembali ke `0`:
+>    - **Pack 3:** `0 → 4` pada `03:09:44 AM` → kembali `0` pada `03:09:47 AM` (**3 detik**), tepat serentak dengan `Bank Inhibit Reason → CRITICAL` (`03:09:44 AM`).
+>    - **Pack 2:** `0 → 4` pada `05:35:56 AM` → kembali `0` pada `05:35:59 AM` (**3 detik**).
+>    - **Pack 1:** `0 → 4` pada `06:08:41 AM` → kembali `0` pada `06:08:44 AM` (**3 detik**).
+>    - **Bukti Grafik `Pack 1/2/3 Cell Min` (`03:09–06:08 AM`):** Ketiga baterai rata lurus di **`~3.260–3.290 mV`** (saat capture `3.323–3.327 mV`), kecuali 1 jarum vertikal 1-sampel di mana `Pack 1 Cell Min` jatuh sesaat dari `~3.265 mV` ke **`~2.250 mV`** (`-1.015 mV`) lalu langsung pulih ke `~3.265 mV` sementara `Pack 2 & Pack 3` pada bus DC yang sama tetap rata. Penurunan `1,015 V` ini masih lolos cek `cell_sum_v < 3.0 V` (`bridge_protocols.hpp:438`), lalu memicu `min_cell_mv <= 2550 mV` → `prot_flags = 4`.
+>    - *(Catatan sekunder: tampak juga 1× restart singkat ESP32 pukul `02:38–02:39 AM` dan reconnect MQTT 10 detik pukul `09:29:00–09:29:10 AM`.)*
+> 3. **Mengapa hanya 3 detik bisa bikin inverter Error 04 & pindah ke PLN?** Secara fisika sel LFP `100 Ah` tidak mungkin drop `1 V` selama 3 detik saja — ini 100% **glitch bacaan AFE/balancing 1-frame internal Shoto** (`Cell UV Alarm Delay` EEPROM Shoto sendiri `3000 ms`, `Cell UV Prot = 2000 mV`). Firmware ESP32 sudah memiliki `1×` re-poll konfirmasi (*anti-glitch*) untuk `INHIBIT_DELTA_V`, **tetapi belum untuk `INHIBIT_CRITICAL`** sehingga 1 frame glitch langsung mengirim `SOC = 0%` + `0 A` → inverter Error `04` dan *latch* di PLN.
+> 4. **Perbaikan Firmware 2-Lapis (Sudah Diterapkan & Terverifikasi):**
+>    - **Anti-Glitch `1×` Re-Poll Konfirmasi ([`shoto_samoto_bridge.ino`](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/shoto_samoto_bridge.ino)):** setiap kali `pack_needs_prot_recheck()` mendeteksi `prot_flags != 0`, `critical`, atau penolakan charge/discharge, ESP32 menunggu `150 ms` lalu mem-poll ulang **hanya slot pack tersebut** sebelum mengirim status ke `g_bank`/inverter, disertai counter **`protRetry=OK/FAIL`** di Serial CLI `status`/`diag`.
+>    - ***Directional OV/UV Protection* ([`bridge_protocols.hpp`](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/bridge_protocols.hpp#L456-L471)):** jika gangguan tetap ada setelah konfirmasi, OV (`>= 3650/3750 mV` sel atau `>= 56.5 V` pack) memblokir **Charge saja** (`CCL = 0 A`, `63H = 0x40`, tetap `Allow Discharge = Yes` & SOC asli tanpa `Error 04`); UV (`<= 2550 mV` sel atau `<= 40.5 V` pack) memblokir **Discharge saja** (`DCL = 0 A`, `63H = 0x80`, tetap `Allow Charge = Yes` agar bisa langsung charge). Termal ekstrem (`OT >= 65 °C` / `UT <= -10 °C`) & konflik OV+UV tetap `INHIBIT_CRITICAL` penuh. *(Re-flash ESP32 agar aktif live.)*
+>
+> **Dekoder 6 Pemicu `CRITICAL` dari Histori `Bank Prot Flags` ([`bridge_protocols.hpp`](file:///Users/opusoctopus/Downloads/shoto_samoto_bridge/firmware/shoto_samoto_bridge/bridge_protocols.hpp#L456-L463)):**
+>
+> | Nilai Desimal `Prot Flags` | Bit Hex | Arti Pemicu `INHIBIT_CRITICAL` |
+> |---|---|---|
+> | `1` | `0x0001` | **Cell OV Prot** (`max_cell_mv >= 3750 mV`) |
+> | `2` | `0x0002` | **Pack OV Prot** (`bus_v >= 56.5 V`) |
+> | `4` | `0x0004` | **Cell UV Prot** (`min_cell_mv <= 2550 mV` — **terbukti di `P3/P2/P1` selama 3 detik!**) |
+> | `8` | `0x0008` | **Pack UV Prot** (`bus_v <= 40.5 V`) |
+> | `512` | `0x0200` | **Over Temp Prot** (`max_temp_c >= 65.0 °C`) |
+> | `1024` | `0x0400` | **Under Temp Prot** (`min_temp_c <= -10.0 °C`, mis. sensor suhu tak terpasang terbaca `0x00` = `-50 °C`) |
+
+#### Tabel Interpretasi Hasil Diagnosa → Akar Masalah Pasti
+| Pola Temuan di View 4 HA / `diag` | Akar Masalah 100% Terbukti | Tindakan Perbaikan |
+|---|---|---|
+| `Inhibit Count > 0` + `Alasan = STALE` + `Peak Poll Age > 9000 ms` + `Bat Err` naik | Miss timing baca baterai melewati batas `POLICY_FRESHNESS_MS (9000 ms)` sehingga bridge mengirim `0%` + `0 A` | Cek kabel/konektor cascade RJ45 Shoto & Endloop `120 Ω`; jika hanya sesaat saat miss/audit, naikkan `POLICY_FRESHNESS_MS` atau percepat timeout poll `TBD_BINARY`. |
+| `Inhibit Count > 0` + `Alasan = DELTA_V` (`Peak Delta V > 1.0 V`) | Selisih tegangan antar pack melampaui `POLICY_MAX_DELTA_V` saat beban berat/imbalance | Cek pembagian arus `Pack #1..#4` di View 2 (terminal busbar kencang & kabel sama panjang); naikkan `Policy Max Delta V` sementara di View 4 bila perlu sambil seimbangkan pack. |
+| **`Inverter Mutex Miss > 0`** | Task inverter (`Core 1`) gagal mengambil `g_snap_mutex` dalam `10 ms` sehingga balasan frame inverter di-drop | Tambah timeout mutex `inv_bridge_task` atau pisahkan lock/copy snapshot non-blocking di `bat_poll_task`/`ha_mqtt_task`. |
+| `Bridge Mode = MONITOR_ONLY` | Bridge berada di mode intip (terbawa dari NVS/config) sehingga tidak membalas inverter | Buka `Maintenance Unlock` di View 4 → ubah `Mode Bridge Inverter` ke `ACTIVE`. |
+| `Mode Inverter = IDLE_OTHER` / `SCAN_61H_ONLY` atau `Inv RX = 0` | Kabel RS485 ke inverter (`Pin 1/2`) terbalik/putus atau setting Menu BMS inverter belum aktif | Cek `Pin 2 Oranye = A(+)`, `Pin 1 Putih-Oranye = B(-)`, serta `Menu 05 = PYL` (`IHF6200`) / `24=USER, 25=On, 31=0` (`ILS6300`). |
+| **`Uptime` sering reset ke angka kecil (`< 300 s`)** | ESP32 reboot karena brownout catu daya saat puncak TX Wi-Fi atau Watchdog Reset | Ganti adaptor `5 V >= 2 A` + kabel USB berkualitas (atau pakai catu terisolasi `Waveshare TTL TO RS485 (C)`), hindari suplai USB port laptop/port lemah. |
+| `Bank Valid = YES`, `Inhibit = 0`, `mtxMiss = 0`, `Uptime` stabil, dan byte SOC di `Last TX 61H` bukan `00` | Bridge mengirim SOC normal; peralihan/pembacaan `0%` berasal dari logika internal/kabel/register inverter | Cek setting internal inverter (*Return To Mains Voltage/SOC*, *BMS Low Power SOC*, paralel config) di LCD atau portal inverter. |
+
+---
+
+### Catatan Audit Gap Daya Bank `±100 W` (Dashboard HA vs LCD Inverter)
+
+* **Mengapa `Daya Bank (W)` di HA sering terbaca `±60–150 W` lebih besar daripada angka beban di LCD inverter?**
+  1. **Perbedaan titik ukur (penyebab utama `~60–120 W`):** HA menghitung **daya DC murni di terminal baterai** (`V_bank × Σ I_pack`), sedangkan layar utama LCD inverter umumnya menampilkan **beban AC output**. Inverter hybrid `5–6.2 kW` memakai **`~50–75 W`** *self-consumption* ditambah rugi konversi DC→AC **`~7–10%`**. *(Contoh: beban AC `500 W` menyedot `~595–610 W` dari baterai).*
+  2. **Toleransi *zero-offset* shunt BMS paralel (`±20–50 W`):** Penjumlahan toleransi sensor arus pada 2–3 pack paralel (`±0.2–0.4 A/pack × 50 V`).
+  3. **Jeda refresh sekunder (`~2.5–5.5 detik`):** Siklus `POLL_INTERVAL_MS = 1500 ms` + poll berurutan antar-pack + `HA_TELEMETRY_INTERVAL_MS = 3000 ms` hanya memengaruhi selisih sesaat ketika beban baru berubah mendadak; jika beban diam `> 15 detik` dan gap stabil di `~100 W`, itu murni rugi inverter + shunt (normal).
+* **Apakah parameter lain juga memiliki gap?**
+  * **`Arus Bank (A)` & `Tegangan Bank (V)`:** Gap kecil (`±0.5–2.0 A` beda kalibrasi shunt BMS vs inverter; `±0.1–0.5 V` *voltage drop* kabel DC + MCB/fuse).
+  * **`SOC (%)`, `CVL/DVL/CCL/DCL`, `Sel Min/Max (mV)`, & `Suhu (°C)`:** **Tidak ada gap titik ukur** (sumber digital sama persis dari frame `61H`/`63H`; SOC hanya beda pembulatan desimal vs integer `±1%`, dan suhu beda tetap `0.05 °C` karena offset `273.1 K`, kecuali saat `INHIBIT` di mana inverter menerima `0%` sedangkan HA menampilkan `raw_soc`).

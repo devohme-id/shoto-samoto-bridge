@@ -48,18 +48,22 @@ recorder:
       - sensor.*_diag_tx63
 
 # =============================================================================
-# File Otomasi, Script & Dashboard Shoto BMS
+# File Otomasi, Script & Dashboard Shoto BMS (Multi-Inverter: IHF6200 + ILS6300)
 # =============================================================================
 # Standar bawaan HA agar boot pertama bersih sebelum file Shoto disalin:
 automation: !include automations.yaml
 script: !include scripts.yaml
 scene: !include scenes.yaml
 
-# Panduan pemasangan file lanjutan dari folder homeassistant/:
-# 1. Dashboard 4 tampilan: salin isi `homeassistant/dashboards/shoto_bms_dashboard.yaml`
-#    ke Home Assistant UI (Settings -> Dashboards -> Raw configuration editor).
-# 2. Otomasi & Script notifikasi HP: salin isi `homeassistant/automations_shoto_bms.yaml`
-#    ke `automations.yaml` dan `homeassistant/scripts_shoto_bms.yaml` ke `scripts.yaml`
-#    (atau aktifkan named include jika dipisah sebagai file tersendiri):
-#      automation shoto_bms: !include automations_shoto_bms.yaml
-#      script shoto_bms: !include scripts_shoto_bms.yaml
+# Panduan pemasangan file dashboard & otomasi untuk 2 inverter terpisah:
+# 1. Dashboard 4 tampilan (masing-masing dibuat sebagai dashboard terpisah di HA UI):
+#    - Inverter #1 (IHF6200): `homeassistant/dashboards/shoto_bms_dashboard.yaml`
+#    - Inverter #2 (ILS6300): `homeassistant/dashboards/shoto_ils6300_dashboard.yaml`
+# 2. Otomasi & Script notifikasi HP (keduanya aman berjalan bersamaan tanpa bentrok ID):
+#    - Inverter #1 (IHF6200): `automations_shoto_bms.yaml` & `scripts_shoto_bms.yaml`
+#    - Inverter #2 (ILS6300): `automations_shoto_ils6300.yaml` & `scripts_shoto_ils6300.yaml`
+#    Aktifkan named include di bawah jika file diletakkan di `/config/` (HAOS) atau `ha_config/` (Docker):
+#      automation shoto_ihf6200: !include automations_shoto_bms.yaml
+#      automation shoto_ils6300: !include automations_shoto_ils6300.yaml
+#      script shoto_ihf6200: !include scripts_shoto_bms.yaml
+#      script shoto_ils6300: !include scripts_shoto_ils6300.yaml
