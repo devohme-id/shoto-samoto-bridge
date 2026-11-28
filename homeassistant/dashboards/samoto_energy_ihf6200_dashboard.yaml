@@ -1,0 +1,152 @@
+---
+title: Energi IHF6200
+views:
+- title: Langsung
+  path: langsung
+  type: sections
+  max_columns: 3
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: PLN masuk
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_grid_power
+      name: Daya aktif
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_grid_voltage
+      name: Tegangan
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_grid_current
+      name: Arus
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_grid_frequency
+      name: Frekuensi
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_grid_power_factor
+      name: Faktor daya
+  - type: grid
+    cards:
+    - type: heading
+      heading: Panel surya
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_pv_status
+      name: Status pengukuran
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_pv_power
+      name: Daya aktif
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_pv_voltage
+      name: Tegangan
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_pv_current
+      name: Arus
+  - type: grid
+    cards:
+    - type: heading
+      heading: Beban inverter
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_load_power
+      name: Daya aktif
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_load_voltage
+      name: Tegangan
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_load_current
+      name: Arus
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_load_frequency
+      name: Frekuensi
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_load_power_factor
+      name: Faktor daya
+  - type: grid
+    cards:
+    - type: heading
+      heading: Baterai Shoto
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_battery_mode
+      name: Arah daya
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_battery_soc
+      name: SOC
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_battery_charge_power
+      name: Charge
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_battery_discharge_power
+      name: Discharge
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_battery_voltage
+      name: Tegangan
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_battery_current
+      name: Arus bertanda
+  - type: grid
+    cards:
+    - type: heading
+      heading: Histori daya
+    - type: history-graph
+      hours_to_show: 24
+      entities:
+      - entity: sensor.samoto_energy_ihf6200_grid_power
+        name: PLN
+      - entity: sensor.samoto_energy_ihf6200_load_power
+        name: Beban
+      - entity: sensor.samoto_energy_ihf6200_pv_power
+        name: PV
+      - entity: sensor.samoto_energy_ihf6200_battery_power
+        name: Baterai (+ charge / − discharge)
+- title: Energi
+  path: energi
+  type: sections
+  max_columns: 3
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Impor PLN
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_grid_energy
+      name: Total meter
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_grid_daily
+      name: Hari ini
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_grid_monthly
+      name: Bulan ini
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_grid_yearly
+      name: Tahun ini
+  - type: grid
+    cards:
+    - type: heading
+      heading: Produksi PV
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_pv_energy
+      name: Total meter
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_pv_daily
+      name: Hari ini
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_pv_monthly
+      name: Bulan ini
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_pv_yearly
+      name: Tahun ini
+  - type: grid
+    cards:
+    - type: heading
+      heading: Konsumsi beban
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_load_energy
+      name: Total meter
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_load_daily
+      name: Hari ini
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_load_monthly
+      name: Bulan ini
+    - type: tile
+      entity: sensor.samoto_energy_ihf6200_load_yearly
+      name: Tahun ini

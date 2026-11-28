@@ -486,13 +486,13 @@
     <a class="toc-link" href="#audit-gap-daya" data-target="audit-gap-daya">4. Audit Gap Daya Bank &plusmn;100 W</a>
 
     <div class="toc-group-label">Konfigurasi &amp; Multi-Site</div>
-    <a class="toc-link" href="#policy-config" data-target="policy-config">5. Aturan Safety config.h (0&ndash;4 Pack)</a>
-    <a class="toc-link" href="#multi-inverter" data-target="multi-inverter">6. Setup Terpisah Inverter #2 (ILS6300)</a>
+    <a class="toc-link" href="#policy-config" data-target="policy-config">5. Aturan Safety dan PLN saat SOC 99–100%</a>
+    <a class="toc-link" href="#multi-inverter" data-target="multi-inverter">6. Multi-Inverter &amp; Monitor Energi</a>
     <a class="toc-link" href="#home-assistant" data-target="home-assistant">7. Home Assistant &amp; 212 Entitas MQTT</a>
     <a class="toc-link" href="#jaringan-mikrotik" data-target="jaringan-mikrotik">8. Jaringan, VirtualBox &amp; Mikrotik NAT</a>
 
     <div class="toc-group-label">Hardware, Protokol &amp; Referensi</div>
-    <a class="toc-link" href="#hardware-wiring" data-target="hardware-wiring">9. Wiring RJ45, MOP Cascade &amp; Menu</a>
+    <a class="toc-link" href="#hardware-wiring" data-target="hardware-wiring">9. Wiring RJ45, Cascade &amp; UNO R3 WiFi</a>
     <a class="toc-link" href="#protokol-eeprom" data-target="protokol-eeprom">10. Protokol Shoto, EEPROM &amp; 60H..63H</a>
     <a class="toc-link" href="#cli-troubleshooting" data-target="cli-troubleshooting">11. Serial CLI &amp; Tabel Troubleshooting</a>
     <a class="toc-link" href="#indeks-az" data-target="indeks-az">12. Indeks Kata Kunci &amp; Error (A&ndash;Z)</a>
@@ -581,7 +581,7 @@
           <li><strong>Perbaikan Firmware SUDAH DITERAPKAN &amp; TERVERIFIKASI Host (`bat_poll_task` &amp; `bridge_protocols.hpp`):</strong>
             <ol>
               <li><strong>Anti-Glitch <code>1&times;</code> Re-Poll Konfirmasi (`shoto_samoto_bridge.ino`):</strong> Saat <code>pack_needs_prot_recheck()</code> mendeteksi <code>prot_flags != 0</code>, <code>critical</code>, atau pembatasan charge/discharge, ESP32 menunggu <code>150 ms</code> lalu mem-poll ulang <strong>hanya slot pack terkait</strong> sebelum memublikasikan status ke <code>g_bank</code>/inverter. Glitch 1-frame AFE tersaring diam-diam dan tercatat pada counter Serial CLI <code>protRetry=OK/FAIL</code> (perintah <code>status</code> / <code>diag</code>).</li>
-              <li><strong><em>Directional OV/UV Protection</em> (`bridge_protocols.hpp`):</strong> Jika kondisi nyata tetap bertahan setelah re-poll, Cell OV (<code>&gt;= 3650 mV</code> soft / <code>&gt;= 3750 mV</code> prot) atau Pack OV (<code>&gt;= 56.5 V</code>) memblokir <strong>Charge saja</strong> (<code>CCL = 0 A</code>, <code>63H = 0x40</code>, tetap izinkan Discharge &amp; kirim SOC asli tanpa <code>Error 04</code>); sedangkan Cell UV (<code>&lt;= 2550 mV</code>) atau Pack UV (<code>&lt;= 40.5 V</code>) memblokir <strong>Discharge saja</strong> (<code>DCL = 0 A</code>, <code>63H = 0x80</code>, tetap izinkan Charge PLN/PV). Gangguan termal ekstrem (<code>OT &gt;= 65 &deg;C</code> / <code>UT &lt;= -10 &deg;C</code>) atau konflik OV+UV tetap memicu <code>INHIBIT_CRITICAL</code> <em>fail-closed</em> penuh. <em>(Catatan: re-flash ESP32 untuk mengaktifkan perbaikan ini secara live.)</em></li>
+              <li><strong><em>Directional OV/UV Protection</em> (`bridge_protocols.hpp`):</strong> Jika kondisi nyata tetap bertahan setelah re-poll, Cell OV (<code>&gt;= 3650 mV</code> soft / <code>&gt;= 3750 mV</code> prot) atau Pack OV (<code>&gt;= 56.5 V</code>) memblokir <strong>Charge saja</strong> (<code>CCL = 0 A</code>, <code>63H = 0x40</code>, tetap izinkan Discharge &amp; kirim SOC asli); sedangkan Cell UV (<code>&lt;= 2550 mV</code>) atau Pack UV (<code>&lt;= 40.5 V</code>) memblokir <strong>Discharge saja</strong> (<code>DCL = 0 A</code>, <code>63H = 0x80</code>, tetap izinkan Charge PLN/PV). Gangguan termal ekstrem (<code>OT &gt;= 65 &deg;C</code> / <code>UT &lt;= -10 &deg;C</code>) atau konflik OV+UV tetap memicu <code>INHIBIT_CRITICAL</code> <em>fail-closed</em> penuh. <em>(Catatan: re-flash ESP32 untuk mengaktifkan perbaikan ini secara live.)</em></li>
             </ol>
           </li>
         </ul>
@@ -589,7 +589,7 @@
       <p><strong>Mengapa aturan manual <code>46 V Return To Mains Voltage</code> tidak terpakai?</strong> Karena pada mode <strong><code>Menu 05 = PYL</code></strong>, inverter mengikuti <strong><code>SOC (%)</code> &amp; izin <code>63H</code></strong> dari BMS. Begitu kapasitas terbaca <strong><code>0%</code></strong>, inverter langsung memicu <strong>Error 04</strong>, pindah ke PLN, dan menahan charging <code>0 A</code> &mdash; lalu dapat terkunci di PLN hingga memenuhi <code>BMS Returns To Battery Mode SOC</code> (tercatat <code>90%</code> pada capture Siseli sebelumnya).</p>
 
       <h3>Dekoder 6 Pemicu <code>INHIBIT_CRITICAL</code> via <code>Bank Prot Flags</code> (<code>bridge_protocols.hpp:456-463</code>)</h3>
-      <p>Pada <code>PROTO_TBD_BINARY</code> Format B, status <code>critical</code> aktif bila nilai <code>prot_flags != 0</code>. Untuk mengetahui pemicu spesifiknya, klik histori <strong><code>Bank Prot Flags</code></strong> (View 1) dan <strong><code>Pack #1/#2/#3 Prot Flags</code></strong> (View 2) pada jam kejadian <code>Error 04</code>:</p>
+      <p>Pada revisi lama sebelum proteksi per arah, <code>PROTO_TBD_BINARY</code> Format B mengaktifkan <code>critical</code> bila nilai <code>prot_flags != 0</code>. Untuk mengetahui pemicu spesifiknya, klik histori <strong><code>Bank Prot Flags</code></strong> (View 1) dan <strong><code>Pack #1/#2/#3 Prot Flags</code></strong> (View 2) pada jam kejadian <code>Error 04</code>:</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Nilai Desimal HA (<code>prot_flags</code>)</th><th>Bit Hex</th><th>Kondisi Pemicu di <code>bridge_protocols.hpp</code></th><th>Ambang Batas Aktif</th></tr></thead>
@@ -704,11 +704,15 @@
     </article>
 
     <!-- 5. POLICY CONFIG.H -->
-    <article class="wiki-article" id="policy-config" data-cat="audit" data-keywords="config.h POLICY_CVL_MAX_V POLICY_DVL_MIN_V 53.6 46.0 CCL DCL 90A 120A MAX_DELTA_V FRESHNESS 9000 return to mains">
+    <article class="wiki-article" id="policy-config" data-cat="audit" data-keywords="config.h POLICY_CVL_MAX_V POLICY_DVL_MIN_V 53.6 46.0 CCL DCL 90A 120A MAX_DELTA_V FRESHNESS 9000 return to mains 99% 99–100% 100% SOC penuh PYL Lithium USE VP PV IHF6200 PLN 0x40 0x80 0xC0 3650 mV">
       <div class="art-head">
         <h2>5. Parameter Safety 24/7 (<code>config.h</code>) &amp; Skala Otomatis 0&ndash;4 Pack</h2>
         <div class="badges"><span class="badge cat">Audit &amp; Parameter</span><span class="badge">15S LFP Awet</span></div>
       </div>
+      <h3>IHF6200 pindah ke PLN saat SOC 99–100% di PYL</h3>
+      <p>Operator melihat 99–100% di LCD, Siseli dan HA. Setelah Menu 05 diubah ke USE, indikator kembali ke “VP”. Pada uji host tiga pack dengan sel normal, SOC 99,50% dibulatkan ke 100% di <code>61H</code>, alarm <code>62H=00000000</code>, dan izin <code>63H=0xC0</code> tetap mengizinkan charge dan discharge.</p>
+      <p>Pada revisi <code>8d720ef</code>, satu sel mencapai 3650 mV dapat menghasilkan <code>0x40</code> (CCL 0 A, discharge tetap diizinkan). Pada 3750 mV, bit proteksi Cell OV juga aktif. Dalam uji revisi lama <code>1eb3ccf</code>, 3750 mV menghasilkan SOC 0%, System Fault dan <code>0x00</code>. Periksa versi ESP32 dan frame di detik perpindahan. Bila izin tetap <code>0xC0</code>, komunikasi normal dan alarm kosong, periksa prioritas sumber, daya PV/beban, status bypass dan Program 12/13 di inverter.</p>
+      <p>Jam transfer dan histori tersinkron masih diperlukan untuk memastikan pemicu fisik. <a href="reports/ISSUE_REPORT_2026-11-27.md">Laporan uji dan data yang perlu direkam</a>.</p>
       <p>Apakah <code>POLICY_DVL_MIN_V = 46.0f</code> menyebabkan auto-switch ke PLN di <code>49&ndash;50 V</code>? <strong>Tidak langsung</strong> &mdash; pada <code>52.1 V</code> atau <code>49&ndash;50 V</code>, tegangan masih di atas <code>46.0 V</code>. Auto-switch terjadi karena inverter di mode <code>PYL</code> bereaksi pada <code>SOC = 0%</code> (atau batas SOC menu inverter), bukan karena <code>DVL 46.0 V</code>.</p>
       <div class="table-wrap">
         <table>
@@ -739,7 +743,7 @@
     </article>
 
     <!-- 6. MULTI INVERTER -->
-    <article class="wiki-article" id="multi-inverter" data-cat="multi" data-keywords="multi-inverter ILS6300 IHF6200 SITE_PROFILE_ILS6300 SITE_PROFILE_IHF6200 2 dashboard terpisah secrets.h platformio">
+    <article class="wiki-article" id="multi-inverter" data-cat="multi" data-keywords="multi-inverter ILS6300 IHF6200 SITE_PROFILE_ILS6300 SITE_PROFILE_IHF6200 2 dashboard terpisah secrets.h platformio satu device client id sama offline online uptime discovery Connected to PV MPPT solar surya beban PLN watt kWh RS232 Siseli Energy dashboard ringkasan inverter PZEM-004T PZEM-016 PZEM-017 DDSU666 Shelly CT Autonics USB RS485 meter DC 500 V belanja Shopee samoto_energy Utility Meter faktor daya power factor PF Voc shunt 100 A charging discharging harian bulanan tahunan">
       <div class="art-head">
         <h2>6. Setup Terpisah Inverter #2 (<code>Samoto ILS6300</code> + 2 Pack Shoto) &amp; 2 Dashboard HA</h2>
         <div class="badges"><span class="badge cat">Multi-Inverter</span><span class="badge">Zero Collision</span></div>
@@ -755,6 +759,9 @@
           <tr><td>Otomasi &amp; Script YAML</td><td><code>automations_shoto_bms.yaml</code> &middot; <code>scripts_shoto_bms.yaml</code></td><td><code>automations_shoto_ils6300.yaml</code> &middot; <code>scripts_shoto_ils6300.yaml</code></td></tr>
         </tbody>
       </table>
+      <h3>ESP32 kedua terhubung ke broker, tetapi hanya satu perangkat muncul</h3>
+      <p>Observasi 27 November 2026 mencatat 10 pasang <code>offline → online</code>, dua rangkaian <code>uptime_s</code> (~330 s dan ~6590 s), dan hanya 212 topik discovery IHF6200 dalam 25 detik. Kedua bridge memakai <code>shoto_ihf6200_esp32</code>. Klien yang baru masuk memutus sesi sebelumnya.</p>
+      <p>Upload profil <code>SITE_PROFILE_ILS6300</code> ke ESP32 kedua. Dalam integrasi MQTT yang sama, dengarkan <code>shoto_bridge/ils6300/status</code> dan <code>homeassistant/+/shoto_ils6300/+/config</code>. Setelah upload ulang pada ESP32 kedua, broker mengirim 212 konfigurasi retained per ID dan kedua status tetap online selama 32 detik. ILS6300 menerbitkan 0 pack dan Serial <code>diag</code> mencatat inverter <code>rx=0</code>. <a href="guides/GUIDE-HOME-ASSISTANT.md">Panduan verifikasi MQTT</a>.</p>
       <h3>Langkah Pasang 2 Dashboard Terpisah di Sidebar HA</h3>
       <ol>
         <li>Pastikan di <strong>Settings &rarr; Devices &amp; Services &rarr; MQTT &rarr; Devices</strong> muncul 2 device terpisah: <code>PLTS Samoto IHF6200</code> dan <code>PLTS Samoto ILS6300</code>.</li>
@@ -773,6 +780,14 @@ automation shoto_ils6300: !include automations_shoto_ils6300.yaml
 script shoto_ihf6200: !include scripts_shoto_bms.yaml
 script shoto_ils6300: !include scripts_shoto_ils6300.yaml</pre>
       </div>
+      <h3>Monitor energi PZEM untuk IHF6200 dan ILS6300</h3>
+      <p>Pasang satu ESP32 monitor khusus dan dua PZEM-004T V3.0 100 A per inverter. Meter input mengukur impor PLN. Meter output mengukur beban. Keduanya menyediakan V, A, W, Hz, faktor daya dan kWh. Arus dan daya baterai berasal dari topik MQTT bridge Shoto. Tanda positif berarti charge dan tanda negatif berarti discharge.</p>
+      <p>PZEM-017 mengukur V, A, W dan kWh PV sampai 300 V DC dengan shunt 100 A yang sesuai. IHF6200 berating input 500 V DC dan ILS6300 245 V DC. Kedua profil menonaktifkan PV saat awal. Teknisi perlu memverifikasi Voc desain pada suhu terendah, margin rating, isolasi dan proteksi sebelum pemasangan. Untuk string di luar rating meter, lanjutkan pengukuran PLN dan beban sambil memilih sumber PV yang memenuhi rating.</p>
+      <p>Gunakan profil <code>energy_ihf6200</code> atau <code>energy_ils6300</code> dan tambahkan paket HA sesuai model. Dashboard Energi memiliki tampilan Langsung dan rekap kWh harian, bulanan serta tahunan. Data yang hilang ditandai <code>Unavailable</code>. Kedua profil lulus build ESP32 Dev Module. Komisioning meter dan dashboard masih menunggu uji instalasi. <a href="guides/GUIDE-SAMOTO-ENERGY.md">Panduan monitor energi</a> &middot; <a href="diagrams/samoto-energy-pzem.svg">Diagram kedua inverter</a>.</p>
+      <h3>Rencana ringkasan lintas inverter dan pembacaan MPPT</h3>
+      <p>Ringkasan PLTS akan membandingkan IHF6200 dan ILS6300 dalam satu layar. ESP32 menyuplai SOC, daya baterai dan proteksi. PV, beban AC, PLN dan mode kerja memerlukan telemetri inverter atau meter di titik ukur terkait. Pilot dimulai pada IHF6200 melalui integrasi baca dongle yang terdokumentasi atau RS232. Antarmuka digital ILS6300 masih perlu dikonfirmasi. Statistik kWh memakai counter per sumber dan menghitung meter PLN bersama sekali. <a href="guides/GUIDE-HOME-ASSISTANT.md">Rencana dan kriteria verifikasi</a>.</p>
+      <h3>Belanja hardware PLN dan PV</h3>
+      <p>Paket awal satu fase memakai PZEM-016 100 A dengan CT dan USB–RS485 Autonics, serta adaptor USB–RS232 untuk pilot data PV IHF6200. Estimasi harga inti Rp210–330 ribu bila Autonics tersedia. Batas input PV vendor 500 V DC pada IHF6200 dan 245 V DC pada ILS6300. Pilih alat ukur DC berdasarkan Voc maksimum string, rating arus dan isolasi. <a href="guides/GUIDE-HOME-ASSISTANT.md">Daftar produk, harga dan pilihan paket</a>.</p>
     </article>
 
     <!-- 7. HOME ASSISTANT -->
@@ -822,7 +837,7 @@ script shoto_ils6300: !include scripts_shoto_ils6300.yaml</pre>
     </article>
 
     <!-- 9. HARDWARE & WIRING -->
-    <article class="wiki-article" id="hardware-wiring" data-cat="hardware" data-keywords="pinout RJ45 shoto samoto cascade MOP endloop 120 ohm XY-K485 waveshare ESP32 Dev Module startup.c GPIO12 menu 05 PYL 24 BTT USER">
+    <article class="wiki-article" id="hardware-wiring" data-cat="hardware" data-keywords="pinout RJ45 shoto samoto cascade MOP endloop 120 ohm XY-K485 waveshare ESP32 Dev Module startup.c GPIO12 menu 05 PYL 24 BTT USER UNO R3 WiFi RobotDyn ESP8266 ATmega328P DIP CH340 I2C level shifter flash GPIO16 TG0WDT_SYS_RESET 1150 mmu set len 344035284 boot-loop DIO 40 MHz ILS6300">
       <div class="art-head">
         <h2>9. Hardware Bridge, Pinout RJ45 Aktual, Cascade MOP &amp; Menu Inverter</h2>
         <div class="badges"><span class="badge cat">Hardware &amp; Protokol</span><span class="badge">Terbukti Live</span></div>
@@ -839,6 +854,11 @@ script shoto_ils6300: !include scripts_shoto_ils6300.yaml</pre>
         <li><strong>Fix Boot-Loop Flash ESP32 (<code>startup.c:328</code>):</strong> Gunakan Board <strong><code>ESP32 Dev Module</code></strong> (bukan <code>WROOM-DA</code>), Flash Mode <code>DIO</code>, <code>40 MHz</code>, hindari pull-up pada <code>GPIO12</code>, dan gunakan adaptor <code>5 V 2 A</code> terpisah saat terpasang di panel ber-EMI tinggi.</li>
         <li><strong>Upgrade Direkomendasikan:</strong> Ganti modul <code>XY-K485</code> non-isolated dengan <code>2&times; Waveshare TTL TO RS485 (C)</code> (isolasi 2500 Vrms, pin GPIO tetap) atau migrasi ke <code>Waveshare ESP32-S3-RS485-CAN</code> (<code>#define BOARD_WAVESHARE_S3</code>).</li>
       </ul>
+      <h3>Boot-loop ESP32 Dev Kit pengganti ILS6300</h3>
+      <p>Log <code>TG0WDT_SYS_RESET</code> dan <code>1150 mmu set</code> berulang disertai alamat/panjang segmen yang rusak sebelum aplikasi mulai. Read-back esptool cocok dengan image 80 MHz dan hash valid. Recovery menggunakan profil ILS6300 pada <code>ESP32 Dev Module</code>, DIO/40 MHz dan upload 115200 dengan erase total dinonaktifkan. Firmware sempat menjawab <code>diag</code>, lalu watchdog kembali reset dan ROM membaca segmen rusak. Broker kemudian menerima kembali telemetri dua pack ILS6300, sementara identitas board yang kembali online belum terverifikasi. Uji USB saja dengan GPIO kosong diperlukan untuk membedakan board dari catu atau rangkaian eksternal. <a href="guides/GUIDE-A-DIY.md">Panduan recovery boot</a>.</p>
+      <h3>Bridge alternatif UNO R3 + ESP8266</h3>
+      <p>Pada desain dua prosesor, UART ATmega328P membaca SD-BA430, UART ESP8266 menjawab Samoto dan I²C ber-level shifter membawa data di antara keduanya. Di referensi RobotDyn, DIP 3–4 ON untuk upload UNO, DIP 5–7 ON untuk upload ESP8266, dan semua OFF untuk operasi dengan UART independen. Cocokkan label unit dan lepaskan kabel UART ke transceiver saat upload.</p>
+      <p>Dua sketch sudah dikompilasi untuk target masing-masing. ESP8266 memakai codec dan batas 15S LFP yang sama untuk PYL. Uji fisik IHF6200 dan timing RS485 masih terbuka. <a href="guides/GUIDE-UNO-R3-WIFI.md">Sketch, urutan flashing dan wiring</a>.</p>
     </article>
 
     <!-- 10. PROTOKOL & EEPROM -->
@@ -908,10 +928,15 @@ script shoto_ils6300: !include scripts_shoto_ils6300.yaml</pre>
         <a class="kw-pill" href="#timing-bridge"><code>mtxMiss</code> Mutex 10 ms Inverter</a>
         <a class="kw-pill" href="#home-assistant"><code>no entity</code> Mismatch Prefix IHF vs ILS</a>
         <a class="kw-pill" href="#jaringan-mikrotik"><code>plts.duckdns.org</code> / <code>103.122.64.161</code></a>
+        <a class="kw-pill" href="#multi-inverter"><code>PZEM-004T / PZEM-017</code> Monitor energi, faktor daya &amp; Voc</a>
         <a class="kw-pill" href="#policy-config"><code>POLICY_FRESHNESS_MS = 9000 ms</code></a>
+        <a class="kw-pill" href="#policy-config"><code>SOC 99–100%</code> PYL ke PLN, USE kembali VP</a>
+        <a class="kw-pill" href="#multi-inverter"><code>PV / PLN / kWh</code> Dashboard dua inverter</a>
         <a class="kw-pill" href="#multi-inverter"><code>SITE_PROFILE_ILS6300</code> Setup Inverter #2</a>
         <a class="kw-pill" href="#error-04-52v-0pct"><code>INHIBIT_CRITICAL (&gt;=3750 mV) / DELTA_V / STALE</code></a>
         <a class="kw-pill" href="#error-04-52v-0pct"><code>prot_flags (1/2/4/8/512/1024)</code> Dekoder <code>CRITICAL</code></a>
+        <a class="kw-pill" href="#hardware-wiring"><code>TG0WDT_SYS_RESET</code> Boot-loop flash ESP32</a>
+        <a class="kw-pill" href="#hardware-wiring"><code>UNO R3 WiFi / ESP8266</code> DIP dan dua upload</a>
         <a class="kw-pill" href="#jaringan-mikrotik"><code>VirtualBox Bridged 192.168.10.250</code></a>
       </div>
     </article>

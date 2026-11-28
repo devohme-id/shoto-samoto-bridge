@@ -206,13 +206,23 @@ Buka [config.h](../../firmware/shoto_samoto_bridge/config.h). Cukup pilih **prof
   ```
   *(Untuk board Waveshare ESP32-S3, ganti `diy_esp32_wroom32` menjadi `waveshare_esp32s3` atau `waveshare_esp32s3_ils6300`.)*
 
-### 4. Verifikasi Awal di Serial Monitor (`115200 baud`)
-Pastikan baris berikut muncul tanpa error:
-- `[PACK+] Pack#1 (addr=1) ONLINE ...` & `[PACK+] Pack#2 (addr=2) ONLINE ...`
-- `[BAT TBD_BINARY] packs=2 valid=YES ...`
-- `[HA MQTT] WiFi connected IP=192.168.1.xx RSSI=-xxdBm`
-- `[HA MQTT] Broker connected, Discovery published`
-- Ketik `diag` → pastikan `mode=PYL_FULL (63H+61H+62H)`, `inhibit=0`, `mtxMiss=0`.
+### 4. Verifikasi di Serial Monitor dan broker
+
+Pada Serial Monitor 115200 baud, baris `[HA MQTT] Connected to 192.168.10.250:1883` menunjukkan broker menerima koneksi. Untuk memastikan perangkat kedua terdaftar, buka **Settings → Devices & services → MQTT → Configure → Listen to a topic** di Home Assistant dan periksa:
+
+| Topik ILS6300 | Hasil yang diharapkan |
+|---|---|
+| `shoto_bridge/ils6300/status` | `online` |
+| `shoto_bridge/ils6300/bank` | Telemetri bank dari ESP32 kedua |
+| `homeassistant/+/shoto_ils6300/+/config` | Pesan discovery dengan `device.identifiers` berisi `shoto_ils6300` |
+
+**Jika hanya perangkat IHF6200 yang muncul**, periksa apakah status `shoto_bridge/ihf6200/status` berulang kali berubah `offline → online` dan apakah `uptime_s` di `shoto_bridge/ihf6200/diag` bergantian antara dua rangkaian nilai. Pada 27 November 2026, pola ini terjadi setelah ESP32 kedua ditambahkan. Broker menerima 212 konfigurasi IHF6200 dan tidak menerima konfigurasi ILS6300. Kedua ESP32 memakai profil default yang membentuk client ID `shoto_ihf6200_esp32` dan satu identitas discovery. Broker memutus sesi lama ketika klien dengan ID yang sama masuk.
+
+Upload ulang hanya ESP32 kedua dengan `SITE_PROFILE_ILS6300` di Arduino IDE atau environment PlatformIO berakhiran `_ils6300`. Gunakan satu integrasi MQTT yang sudah berjalan. Setelah upload, verifikasi dua topik status yang berbeda, kedua perangkat di **MQTT → Devices**, dan telemetri bank masing-masing.
+
+**Hasil setelah upload ulang, 27 November 2026.** ESP32 Dev Kit kedua memakai build `-DSITE_PROFILE_ILS6300`. Broker mengirim ulang 212 konfigurasi retained untuk setiap ID dan kedua topik status tetap `online` selama observasi 32 detik. IHF6200 mengirim data bank valid dengan tiga pack. ILS6300 mengirim telemetri `packs=0`, `valid=false`. Serial `diag` juga mencatat `bat_ok=0` dan inverter `rx=0`. Discovery ILS6300 sudah tersedia meski jalur RS485 belum menghasilkan telemetri atau polling.
+
+Untuk pemeriksaan RS485 sesudah pack dipasang, cek `[PACK+]` untuk alamat 1 dan 2 pada ILS6300 serta `[BAT TBD_BINARY] packs=2 valid=YES`. Perintah Serial `diag` memperlihatkan apakah polling inverter berjalan (`63H/61H/62H`, `inhibit=0`, `mtxMiss=0`). Discovery tetap dapat dikirim sebelum baterai dan inverter berkomunikasi.
 
 ---
 
@@ -254,6 +264,92 @@ Agar monitoring **IHF6200** dan **ILS6300** terpisah rapi di menu sidebar Home A
      script shoto_ils6300: !include scripts_shoto_ils6300.yaml
      ```
      Terakhir buka **Developer Tools → Check Configuration** (pastikan hijau/valid) → **Restart Home Assistant**.
+
+### Rencana dashboard PV, beban, dan PLN untuk dua inverter
+
+Untuk pemasangan meter PZEM-004T dan PZEM-017, gunakan [panduan paket monitor energi](GUIDE-SAMOTO-ENERGY.md). Paket ini memasang dashboard **Energi IHF6200** dan **Energi ILS6300** secara terpisah. Rencana di bawah mencakup ringkasan lintas inverter dan pembacaan langsung telemetri MPPT melalui inverter.
+
+Tambahkan dashboard **PLTS Ringkasan** di Home Assistant untuk membandingkan IHF6200 dan ILS6300 dalam satu layar. Hubungkan masing-masing kolom ke dashboard detail yang sudah ada. Tambahkan data inverter ke view **Overview & Power Flow** setelah sumber angkanya tervalidasi. View Packs, EEPROM dan diagnostik tetap menjadi tempat pemeriksaan BMS.
+
+| Data | Sumber dan status |
+|---|---|
+| SOC, tegangan, arus, daya baterai DC, jumlah pack, sel, suhu BMS | Sudah tersedia dari bridge MQTT `shoto_bridge/ihf6200` dan `shoto_bridge/ils6300`. Daya bank dihitung dari tegangan dikali arus. Tanda positif berarti charge dan negatif berarti discharge. Gunakan status validitas bank saat membuat agregat atau sensor energi. |
+| PV (W, V, A), per MPPT jika tersedia | Telemetri inverter. IHF6200 sudah memiliki jalur dongle Siseli pada instalasi proyek. Samoto mendokumentasikan RS232 2400 baud. Untuk ILS6300, Samoto mencantumkan tegangan dan arus PV di LCD. Port, pinout dan protokol telemetri ILS6300 menunggu konfirmasi unit fisik/vendor. |
+| Output AC, beban (W dan %), tegangan (V), frekuensi (Hz) | Telemetri inverter atau meter daya aktif AC pada keluaran yang ingin dipantau. Simpan VA sebagai entitas terpisah jika sumber juga melaporkannya. |
+| PLN masuk (V, Hz, W, kWh), mode aktual dan alarm | Ambil mode kerja, bypass dan kode fault dari inverter jika tersedia. Pakai pengukuran daya aktif AC input atau meter PLN untuk W/kWh. PLN terdeteksi pada input saja belum membuktikan beban disuplai lewat bypass. `PYL_FULL` mengukur pola komunikasi BMS. |
+| Produksi/konsumsi harian dan bulanan (kWh) | Prioritaskan counter energi kumulatif dari sumber yang sudah diverifikasi. Bila hanya ada W, buat estimasi kWh dengan HA Integral, lalu gunakan Utility Meter untuk ringkasan harian/bulanan. |
+
+[Spesifikasi IHF6200](https://samoto.co.id/products/ihf-6200/) · [Spesifikasi ILS6300](https://samoto.co.id/products/ils-6300/) · [Home Assistant Integral](https://www.home-assistant.io/integrations/integration/) · [Utility Meter](https://www.home-assistant.io/integrations/utility_meter/)
+
+1. **Mulai dari data siap pakai.** Isi dua kolom dengan SOC, daya baterai, tegangan, jumlah pack, Bank Valid, status bridge dan tautan detail. Verifikasi kedua prefix MQTT serta nama entitas aktual di HA sebelum menautkan kartu. Gunakan kartu bawaan Tile, Entities dan History Graph.
+2. **Pilot telemetri IHF6200.** Cek apakah dongle Siseli menyediakan cara ekspor/API baca yang terdokumentasi untuk perangkat dan akun ini. Bila belum ada jalur yang bisa dipakai, validasi satu pembaca serial lokal lewat port COM/RS232 dengan kabel sesuai pinout Samoto dan hanya perintah baca yang terverifikasi. Jika port yang sama sedang ditempati dongle, jadwalkan uji pergantian. Gunakan satu master serial pada port tersebut. Bandingkan PV W, beban W, AC input dan mode dengan LCD/Siseli pada waktu yang sama. Gunakan prioritas data lokal jika hasil pilot stabil.
+3. **Validasi ILS6300 secara terpisah.** Identifikasi port monitoring, model dongle jika ada, firmware dan dokumentasi protokol resmi. Jika tersedia, ulangi pengujian dengan LCD ILS6300. Jika hanya ada tampilan LCD tanpa keluaran digital yang terverifikasi, meter AC terpisah dapat mengisi data PLN dan beban. PV pada ILS6300 tetap berstatus belum tersedia sampai ada sumber pembacaan yang sesuai. Pasang meter panel AC atau PV DC hanya melalui teknisi dengan perangkat yang sesuai untuk titik ukur.
+4. **Terbitkan telemetri inverter per unit.** Gunakan identitas HA terpisah dari BMS, misalnya `samoto_ihf6200` dan `samoto_ils6300`. Mulai dengan topik `samoto/ihf6200/telemetry` dan `samoto/ils6300/telemetry`, identitas MQTT unik, timestamp pengambilan, status koneksi, dan batas kedaluwarsa berdasarkan interval polling. Dengan pembaca serial lokal, mulai sekitar 5–10 detik per sampel dan ukur latensinya. Labeli kartu yang datanya putus sebagai tidak tersedia. Nilai 0 W dipakai untuk hasil ukur valid seperti PV malam hari. Pisahkan jalur ini dari bus RS485 BMS dan publish baca-saja.
+5. **Lengkapi ringkasan dan histori.** Sediakan baris PV W, beban W, PLN W, SOC, dan arah baterai per inverter. Tambahkan grafik 24 jam untuk PV, beban, PLN dan daya baterai dalam W serta grafik SOC terpisah dalam %. Untuk menganalisis alih sumber, sejajarkan histori bypass/error inverter dengan SOC, CCL/DCL dan `Bank Valid` dari BMS. Tampilkan angka gabungan PV hanya bila kedua pengukuran valid dan mengukur dua rangkaian PV yang berbeda.
+6. **Aktifkan statistik energi.** Masukkan sumber produksi PV masing-masing ke Home Assistant Energy. Untuk baterai, pisahkan besaran charge dan discharge menjadi dua aliran energi. Gunakan kelas `power` / `measurement` untuk W dan `energy` / `total_increasing` untuk counter kumulatif yang sesuai. Jika PLN diukur di satu meter utama bersama, pakai meter utama sekali di Energy. Meter input cabang dan meter keluaran inverter bisa ditampilkan per unit. Hindari menjumlahkan meter utama dan cabang untuk total yang sama. Tambahkan ekspor PLN hanya bila alirannya memang terukur.
+7. **Terima setelah uji siang dan malam.** Cocokkan arah daya dan satuan pada kedua LCD dan bandingkan total harian dengan sumber pengukur. Uji saat PV aktif, PV malam, perubahan beban, charge/discharge, alih ke PLN yang terjadi dalam operasi normal, dan sumber telemetri offline. Pastikan data yang kedaluwarsa tidak menambah kWh. Cek statistik HA sebelum mengaktifkan ringkasan energi.
+
+[Home Assistant Energy](https://www.home-assistant.io/docs/energy/) · [Sensor PLN](https://www.home-assistant.io/docs/energy/electricity-grid/) · [FAQ sensor energi](https://www.home-assistant.io/docs/energy/faq/)
+
+### Belanja hardware PLN dan panel surya
+
+**Paket utama, estimasi Rp210–330 ribu** untuk barang inti dengan asumsi PLN 1 fase dan adaptor Autonics SCM-US48I proyek tersedia untuk dipakai. Beli satu **PZEM-016 RS485 100 A lengkap dengan CT** untuk impor PLN dan satu **USB–RS232** untuk pilot IHF6200 jika jalur baca dongle Siseli belum bisa diintegrasikan. Pilih adaptor RS232 setelah pinout kabel monitoring cocok. Jika hanya membeli meter PLN dan memakai kembali Autonics, acuan meter sekitar Rp153–187 ribu. Tanpa Autonics, alternatif adaptor USB–RS485 terisolasi dua kanal sekitar Rp399 ribu, sehingga paket inti sekitar Rp610–725 ribu. Perkiraan ini memakai harga listing per 28 November 2026 dan belum memasukkan kabel khusus Samoto, suplai sesuai varian meter, box, proteksi, ongkir, atau jasa teknisi.
+
+Satu meter di jalur utama rumah memberi total PLN. Dua meter di cabang AC input memberi rincian PLN per inverter. Jika keduanya dipakai, Home Assistant Energy mengambil total dari meter utama sekali. Satu meter di output AC memberi data beban, dengan kemungkinan kontribusi PV, baterai dan PLN. Gunakan bus Modbus meter tersendiri dari RS485 BMS. Jika meter masuk lewat USB Mini PC, pastikan HAOS VirtualBox melihat adaptor dan gunakan pemetaan port persisten bila tersedia. [Home Assistant Modbus](https://www.home-assistant.io/integrations/modbus/) · [Home Assistant Energy](https://www.home-assistant.io/docs/energy/electricity-grid/)
+
+#### Pilihan pengukuran AC
+
+Harga acuan adalah harga yang ditampilkan sumber untuk listing atau varian tersebut. Cocokkan SKU, isi kit, stok dan harga saat checkout.
+
+| Opsi | Harga acuan | Kegunaan dan listing |
+|---|---:|---|
+| Peacefair PZEM-016 100 A CT | Rp152.500–186.500 | Prioritas untuk impor PLN satu fase. Baca W, kWh, V, A, Hz dan PF via RS485 Modbus. Cek variasi yang menyertakan CT. [Shopee](https://shopee.co.id/Peacefair-PZEM-016-100A-AC-Communication-Module-RS485-Multi-Meter-6in1-i.126515461.4479329834) · [Peacefair](https://en.peacefair.cn/product/771.html) |
+| PZEM-004T V3 100 A CT | Rp169.000–204.000 | UART TTL melalui ESP32 pengukur khusus, dengan ESPHome `pzemac` untuk V3. Pilih level logika sesuai varian dan enclosure listrik. [Shopee Rp169.000](https://shopee.co.id/Modul-PZEM-004T-V3.0-V4.0-AC-Power-Meter-Voltmeter-Ammeter-TTL-100A-i.40647041.50719804442) · [Shopee Rp204.000](https://shopee.co.id/PZEM-004T-V3---V4-%E2%80%93-Sensor-AC-Meter-Watt-Volt-Ampere-100A-80%E2%80%93260V-Open-CT-i.62956347.22256578878) · [ESPHome](https://esphome.io/components/sensor/pzemac/) |
+| PZEM-014 10 A RS485 | Rp128.600 | Untuk sirkuit AC kecil dalam ratingnya. Alternatif jika perlu Modbus RS485 pada cabang kecil. [AMSAN](https://amsanelectronics.com/shop/peacefair-pzem-014-10a-ac-communication-module-rs485-multi-meter-6in1/) |
+| PZEM-004T 10 A | Mulai Rp130.000 pada listing gabungan | Varian shunt untuk sirkuit kecil dalam ratingnya. Pilih 100 A CT untuk rencana meter utama. [Shopee](https://shopee.co.id/PZEM-004T-10A-100A-AC-80V-260V-Volt-Ampere-Watt-meter-TTL-interface-i.975438764.22678049006) |
+| Tuya PJ-MGW1103 Wi-Fi 80 A | Rp233.900 | Opsi murah tanpa USB di Mini PC. Konfirmasi SKU dan entitas W/kWh yang benar-benar muncul di integrasi Tuya sebelum membeli. [Shopee](https://shopee.co.id/TECNOPRO-Tuya-Smart-Energy-Meter-80A-WiFi-with-Current-Transformer-Clamp-kWh-PJ-MGW1103-i.55395146.27158240231) · [HA Tuya](https://www.home-assistant.io/integrations/tuya/) |
+| Tuya Wi‑Fi clamp 2 kanal 80 A | Rp576.000 | Kandidat dua cabang satu fase. Konfirmasi data per kanal di HA dan dukungan impor/ekspor pada SKU tersebut. Tetap mengukur AC. [Shopee](https://shopee.co.id/Tuya-Smart-Life-WiFi-Energy-Meter-80A-Bidirectional-2-Channel-with-Clamp-App-Monitor-Solar-Export-and-Import-Power-AC110V-240V-i.1569090129.40710411149) |
+| Tuya Zigbee clamp 1/2 kanal 80 A | Rp1.008.800–1.149.600 | Minta model dan fingerprint Zigbee sebelum beli. Model yang tampak sama dapat mengekspos entitas berbeda. [Shopee](https://shopee.co.id/Tuya-Smart-ZigBee-Energy-Meter-Birection-1-2-annel-with-Current-Transformer-Clamp-App-Monitor-Power-80A-110V-240V-50-60Hz-i.1661380915.56152499788) · [Contoh model terdaftar di Zigbee2MQTT](https://www.zigbee2mqtt.io/devices/PJ-MGW1203.html) |
+| DDS238-2 ZN/S RS485 | Rp568.000, listing saat terindeks habis | Meter DIN satu fase alternatif. Minta varian Modbus dan register map. [Shopee](https://shopee.co.id/Din-Rail-kWh-Meter-Voltage-Current-DDS238-2-ZN-S-with-RS485-MODBUS-RTU-i.126515461.9597713563) |
+| CHINT DDSU666 5(80)A RS485 | Rp812.812 | Meter DIN satu fase. Versi katalog ini menyediakan impor dan ekspor kWh. Konfirmasi SKU RS485 saat beli. [ElektroBee](https://elektrobee.id/komponen/power-meter/) · [Katalog CHINT](https://www.chintglobal.com/sg/en/products/instruments-meters/electricity-meter/ddsu666.html) |
+| Peacefair PZIOT E01 | Rp229.000 | Meter DIN AC Wi‑Fi/Bluetooth. Konfirmasi antarmuka dan entitas yang dapat dibaca HA. [AMSAN](https://amsanelectronics.com/shop/pziot-e01-ac-din-rail-multifunction-meter-100a-wifi-bluetooth-pzem/) |
+| AT2PW 100 A | Rp361.000 | Meter DIN AC dengan Wi‑Fi dan RS485 menurut listing pemasok. Minta register map dan pastikan varian yang dibeli. [AMSAN](https://amsanelectronics.com/shop/at2pw-220v-ac-100a-wifi-din-rail-kwh-meter-rs485-volt-ampere-watt/) |
+| SONOFF POWCT 100 A | Rp729.900 | Meter clamp Wi-Fi dengan eWeLink. Validasi jalur integrasi dan entitas energi sebelum beli. [Shopee Official Store](https://shopee.co.id/SONOFF-Smart-Switch-POWCT-POW-Ring-100A-Smart-Power-Meter-Energy-Monitoring-Smart-Home-Automation-i.823333532.28011000513) · [SONOFF](https://support.sonoff.tech/powct-usermanual/) |
+| Shelly EM Gen3 + CT 50 A | Rp1.121.201 | Meter Wi-Fi dengan integrasi lokal HA. Cek batas arus, titik yang satu fase, serta apakah CT kedua perlu dibeli terpisah. [Shopee](https://shopee.co.id/Shelly-EM-Gen3-Smart-Meter-WiFi-Clamp-50A-Pengukur-Listrik-Daya-Monitoring-Energi-Rumah-Tanpa-Hub-Support-Alexa-Google-Home-i.1493895295.51608094969) · [Shelly](https://www.shelly.com/products/shelly-em-gen3) · [HA Shelly](https://www.home-assistant.io/integrations/shelly/) |
+| PZEM-6L24 RS485 | Rp616.000–751.000 | Kandidat bila PLN tiga fase. Cocokkan tipe CT dan register map. [Shopee](https://shopee.co.id/Pzem-6L24-3-Phase-Ac-Energy-Meter-Module-100A-380V-RS485-Modbus-Rtu-i.1452000884.47216068528) |
+| Shelly Pro 3EM 120 A | Rp2.750.000 | Opsi tiga fase dengan LAN dan integrasi lokal. [Shopee](https://shopee.co.id/Shelly-Pro-3EM-DIN-Rail-Mount-3-Phase-Smart-Energy-Meter-with-Wi-Fi-LAN-Bluetooth-Connectivity-3%C3%97120A-CT-Interfaces-60-Day-Historical-Logging-MODBUS-MQTT-Support-i.1493895295.48154519172) · [HA Shelly](https://www.home-assistant.io/integrations/shelly/) |
+| TP-Link Tapo P110 | Rp159.000–169.000 | Pengukuran satu alat colok dalam rating unit. [Shopee Rp159.000](https://shopee.co.id/TP-Link-TAPO-P110-Smart-Plug-WiFi-IoT-with-Energy-Monitoring-i.53634567.40981892333) · [HA TP-Link](https://www.home-assistant.io/integrations/tplink/) |
+| PZEM-061 panel LCD AC | Rp135.000 | Tampilan lokal cadangan, tanpa jalur HA yang terverifikasi untuk listing ini. [Shopee](https://shopee.co.id/Power-meter-digital-pzem-061-watt-ampere-voltmeter-220Vac-100A-i.123330097.24969490621) |
+
+#### Pembaca data PV, adaptor dan komponen pendukung
+
+| Opsi | Harga acuan | Kegunaan dan listing |
+|---|---:|---|
+| Dongle Siseli IHF6200 yang ada | Rp0 untuk reuse | Data tetap tersedia di portal. Integrasi HA menunggu antarmuka baca/ekspor yang terdokumentasi. [Dongle Samoto](https://samoto.co.id/products/dongle-wifi-kit/) |
+| USB–RS232 DB9 CH340/HL-340 | Rp55.000–60.000 | Pilot COM IHF6200 setelah kabel, jenis konektor, pinout dan protokol dicek. Pilih level RS232. [Shopee Rp55.000](https://shopee.co.id/Kabel-Adapter-USB-to-Serial-RS232-UART-DB9-MALE-HL-340-HL340-CH340-HL-340-HL340-USB-to-Serial-RS232-i.352308685.51752619634) · [Shopee Rp60.000](https://shopee.co.id/Kabel-USB-TO-Serial-UART-RS232-Male-DB9-Adapter-Konverter-HL-340-CH340-i.21375728.23461304629) |
+| UGREEN USB–RS232 DB9 20201 | Rp139.000 | Alternatif USB–RS232 dengan DB9 female. Tetap perlu kabel sesuai port inverter. [Shopee](https://shopee.co.id/UGREEN-Converter-Adapter-Kabel-USB-to-Serial-DB9-RS232-Female-20201-i.1082522935.24450449463) |
+| ESP32 DevKit + MAX3232 | Rp75.000 + Rp9.000–10.500 | Alternatif pembaca Wi-Fi untuk port RS232 yang jauh dari Mini PC. Memerlukan firmware pembaca khusus dan verifikasi level serta isolasi untuk instalasi tetap. [ESP32](https://shopee.co.id/ESP32-DevKit-V1-DOIT-ESP-32-WROOM-32-30-Pin-Type-C-CP2102-CH340-NodeMCU-WiFi-Bluetooth-BLE-IoT-Development-Board-i.1928431343.51067781603) · [MAX3232](https://shopee.co.id/MAX3232-RS232-to-TTL-Serial-Port-Converter-module-DB9-Connector-i.65450634.12542395086) |
+| Autonics SCM-US48I yang ada | Rp0 untuk reuse | Gunakan sebagai USB–RS485 meter PLN jika sudah bebas dari kebutuhan servis lain. [Inventaris hardware proyek](../../PROJECT_CONTEXT.md) |
+| Kabel USB–RS485 untuk PZEM | Rp63.000 | Adaptor murah untuk cek kompatibilitas. Isolasi galvanik belum terverifikasi dari listing ini. [AMSAN](https://amsanelectronics.com/shop/usb-to-rs485-kabel-converter-adapter-peacefair-pzem/) |
+| Waveshare USB TO 2CH RS485 | Rp399.000 | Alternatif USB–RS485 terisolasi pada sisi USB. Cocok untuk Modbus PLN di Mini PC. [Shopee](https://shopee.co.id/Waveshare-USB-TO-2CH-RS485-Industrial-Grade-Isolated-Converter-USB-TO-2CH-RS485-i.14439227.42128322174) · [Waveshare](https://www.waveshare.com/product/usb-to-2ch-rs485.htm) |
+| Waveshare USB TO RS485 (B) | Rp207.000–245.000 | USB–RS485 dengan proteksi TVS/ESD. Untuk kebutuhan isolasi galvanik, pilih model yang menyatakan isolasi di spesifikasi. [Shopee](https://shopee.co.id/USB-to-RS485-CH343G-Converter-Waveshare-i.18856404.22449193378) · [Waveshare](https://www.waveshare.com/usb-to-rs485-b.htm) |
+| Waveshare USB TO RS232/485/TTL | Rp529.000 | Alternatif adaptor isolasi multi-antarmuka. Cocokkan SKU dan mode dengan port yang dibaca. [Shopee](https://shopee.co.id/USB-TO-RS232-485-TTL-Interface-Converter-Waveshare-i.18856404.21662154259) · [Waveshare](https://www.waveshare.com/usb-to-rs232-485-ttl.htm) |
+| USR-TCP232-304 RS485–Ethernet | Rp425.000–565.000 | Opsi jika meter RS485 jauh dari Mini PC dan LAN tersedia. Cocokkan mode gateway, misalnya RTU over TCP untuk serial transparan. [Shopee Rp425.000](https://shopee.co.id/Serial-Converter-USR-IOT-TCP232-304-RS-485-to-Ethernet-TCP-IP-i.232226799.27618240293) · [HA Modbus](https://www.home-assistant.io/integrations/modbus/) |
+| SONOFF ZBDongle‑E | Rp425.900 | Coordinator hanya jika memilih meter Zigbee dan belum punya coordinator yang kompatibel. [Shopee Official Store](https://shopee.co.id/Sonoff-ZBDongle-E-Zigbee-3.0-USB-Dongle-Plus-Universal-Zigbee-Iot-i.823333532.24669738189) |
+| Box panel dan kabel data | Mulai Rp26.000 untuk contoh box DIN 4 grup. Contoh RS485 shielded Rp42.500/m | Teknisi memilih enclosure yang menutup terminal, dengan ukuran, rating dan proteksi yang sesuai perangkat. [Box Broco](https://shopee.co.id/Broco-Electrical-17204-Box-MCB-4-Group-Outbow-i.1425143806.27171584875) · [Contoh kabel data](https://shopee.co.id/Kabel-Belden-RS-485-Multi-Pair-9841-24-AWG-1-Pair-Konduktor-Kontrol-RS485-isi-2-1Pair-isi2-24AWG-Shielded-Eceran-Per-Meter-Meteran-i.949703535.22429678009) |
+
+#### Meter langsung untuk PV DC
+
+Samoto mencantumkan input PV maksimum **500 V DC pada IHF6200** dan **245 V DC pada ILS6300**. Ini batas input inverter. Pilih alat ukur berdasarkan **Voc maksimum string pada suhu terendah**, arus rangkaian, isolasi, serta rating instalasi. Meter AC dan clamp CT AC dipakai untuk PLN atau keluaran AC. Pemasangan panel PLN serta string PV DC diserahkan ke teknisi. [Samoto IHF6200](https://samoto.co.id/products/ihf-6200/) · [Samoto ILS6300](https://samoto.co.id/products/ils-6300/)
+
+| Opsi | Harga acuan | Kesesuaian |
+|---|---:|---|
+| PZEM-003 RS485 10 A / 300 V DC | Rp199.189 | Referensi kelas produk untuk rangkaian DC yang sesuai rating. Batas 10 A dan 300 V membuatnya tidak cocok sebagai pilihan umum untuk kedua string Samoto. [Shopee](https://shopee.co.id/PZEM-003-10A-0-300V-DC-Watt-Meter-Voltage-Current-Power-Energy-RS485-i.5622377.3290140447) |
+| PZEM-017 RS485 300 V DC + shunt | Rp261.450 untuk listing 100 A | Di bawah batas input PV IHF6200. Untuk ILS6300, rating nominal saja belum cukup untuk merekomendasikan pemasangan. Data string, isolasi, proteksi dan metode ukur harus dievaluasi. [Shopee](https://shopee.co.id/PZEM-017-100A-0-300V-DC-Watt-Meter-Voltage-Current-Power-Energy-Sensor-Module-RS485-w-Shunt-Resistor-i.5623654.9359803197) · [Peacefair](https://en.peacefair.cn/product/786.html) |
+| Acrel DJSF1352-RN atau RN/D | Minta penawaran | Kandidat meter PV DC industri hingga 1000 V dengan jenis sensor arus dan kanal sesuai konfigurasi. Pilih RN/D jika dua kanal independen dibutuhkan dan SKU mendukung. [Pemasok Indonesia](https://meterin.id/produk/dc-multifunction-meter-djsf1352-rn/) · [Acrel RN/D](https://www.acrelpower.com/id/djsf1352-rn-d-ul-certified-dual-circuits-dc-energy-meter/) |
+| Acrel PZ72L-DE | Minta penawaran | Kandidat panel-mount hingga 1000 V DC dengan Modbus, sensor arus yang cocok, dan enclosure yang sesuai. Stok marketplace Indonesia belum terverifikasi. [Panduan pemilihan Acrel](https://www.acrel-electric.ke/uploads/file/energy-meter-module-selection-for-ev-charger.pdf) |
+
+**Urutan belanja.** Pasang pengukuran impor PLN dahulu. Untuk PV, gunakan data MPPT inverter dan pilot koneksi IHF6200 sebelum memesan adaptor kedua. Jika ILS6300 hanya menawarkan data di LCD dan dibutuhkan rekaman PV otomatis, minta penawaran meter DC industri beserta sensor arus dan instalasinya. Integrasi panel AC dan PV tetap mengikuti rencana telemetri baca-saja per unit.
 
 ### Daftar Lengkap Parameter yang Tampil
 

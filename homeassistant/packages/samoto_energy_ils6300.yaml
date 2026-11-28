@@ -1,0 +1,301 @@
+# Paket pemantauan ILS6300. Dashboard terpisah memakai entity_id di bawah.
+mqtt:
+  sensor:
+    - <<: &ils6300_grid
+        state_topic: "samoto_energy/ils6300/grid"
+        expire_after: 20
+        availability_mode: all
+        availability:
+          - topic: "samoto_energy/ils6300/status"
+          - topic: "samoto_energy/ils6300/grid"
+            value_template: >-
+              {{ 'online' if value_json is mapping and value_json.ok is sameas true else 'offline' }}
+        device: &ils6300_meter_device
+          identifiers: [samoto_energy_ils6300]
+          name: "Monitoring Energi ILS6300"
+          manufacturer: Peacefair
+          model: "PZEM-004T V3 / PZEM-017"
+      name: "ILS6300 PLN Tegangan"
+      unique_id: samoto_energy_ils6300_grid_voltage
+      default_entity_id: sensor.samoto_energy_ils6300_grid_voltage
+      device_class: voltage
+      state_class: measurement
+      unit_of_measurement: "V"
+      value_template: >-
+        {{ value_json.voltage_v if value_json is mapping and value_json.voltage_v is number else none }}
+    - <<: *ils6300_grid
+      name: "ILS6300 PLN Arus"
+      unique_id: samoto_energy_ils6300_grid_current
+      default_entity_id: sensor.samoto_energy_ils6300_grid_current
+      device_class: current
+      state_class: measurement
+      unit_of_measurement: "A"
+      value_template: >-
+        {{ value_json.current_a if value_json is mapping and value_json.current_a is number else none }}
+    - <<: *ils6300_grid
+      name: "ILS6300 PLN Daya aktif"
+      unique_id: samoto_energy_ils6300_grid_power
+      default_entity_id: sensor.samoto_energy_ils6300_grid_power
+      device_class: power
+      state_class: measurement
+      unit_of_measurement: "W"
+      value_template: >-
+        {{ value_json.power_w if value_json is mapping and value_json.power_w is number else none }}
+    - <<: *ils6300_grid
+      name: "ILS6300 PLN Energi total"
+      unique_id: samoto_energy_ils6300_grid_energy
+      default_entity_id: sensor.samoto_energy_ils6300_grid_energy
+      device_class: energy
+      state_class: total_increasing
+      unit_of_measurement: "kWh"
+      value_template: >-
+        {{ (value_json.energy_wh / 1000) | round(3) if value_json is mapping and value_json.energy_wh is number else none }}
+    - <<: *ils6300_grid
+      name: "ILS6300 PLN Frekuensi"
+      unique_id: samoto_energy_ils6300_grid_frequency
+      default_entity_id: sensor.samoto_energy_ils6300_grid_frequency
+      device_class: frequency
+      state_class: measurement
+      unit_of_measurement: "Hz"
+      value_template: >-
+        {{ value_json.frequency_hz if value_json is mapping and value_json.frequency_hz is number else none }}
+    - <<: *ils6300_grid
+      name: "ILS6300 PLN Faktor daya"
+      unique_id: samoto_energy_ils6300_grid_power_factor
+      default_entity_id: sensor.samoto_energy_ils6300_grid_power_factor
+      device_class: power_factor
+      state_class: measurement
+      value_template: >-
+        {{ value_json.power_factor if value_json is mapping and value_json.power_factor is number else none }}
+    - <<: &ils6300_load
+        state_topic: "samoto_energy/ils6300/load"
+        expire_after: 20
+        availability_mode: all
+        availability:
+          - topic: "samoto_energy/ils6300/status"
+          - topic: "samoto_energy/ils6300/load"
+            value_template: >-
+              {{ 'online' if value_json is mapping and value_json.ok is sameas true else 'offline' }}
+        device: *ils6300_meter_device
+      name: "ILS6300 Beban Tegangan"
+      unique_id: samoto_energy_ils6300_load_voltage
+      default_entity_id: sensor.samoto_energy_ils6300_load_voltage
+      device_class: voltage
+      state_class: measurement
+      unit_of_measurement: "V"
+      value_template: >-
+        {{ value_json.voltage_v if value_json is mapping and value_json.voltage_v is number else none }}
+    - <<: *ils6300_load
+      name: "ILS6300 Beban Arus"
+      unique_id: samoto_energy_ils6300_load_current
+      default_entity_id: sensor.samoto_energy_ils6300_load_current
+      device_class: current
+      state_class: measurement
+      unit_of_measurement: "A"
+      value_template: >-
+        {{ value_json.current_a if value_json is mapping and value_json.current_a is number else none }}
+    - <<: *ils6300_load
+      name: "ILS6300 Beban Daya aktif"
+      unique_id: samoto_energy_ils6300_load_power
+      default_entity_id: sensor.samoto_energy_ils6300_load_power
+      device_class: power
+      state_class: measurement
+      unit_of_measurement: "W"
+      value_template: >-
+        {{ value_json.power_w if value_json is mapping and value_json.power_w is number else none }}
+    - <<: *ils6300_load
+      name: "ILS6300 Beban Energi total"
+      unique_id: samoto_energy_ils6300_load_energy
+      default_entity_id: sensor.samoto_energy_ils6300_load_energy
+      device_class: energy
+      state_class: total_increasing
+      unit_of_measurement: "kWh"
+      value_template: >-
+        {{ (value_json.energy_wh / 1000) | round(3) if value_json is mapping and value_json.energy_wh is number else none }}
+    - <<: *ils6300_load
+      name: "ILS6300 Beban Frekuensi"
+      unique_id: samoto_energy_ils6300_load_frequency
+      default_entity_id: sensor.samoto_energy_ils6300_load_frequency
+      device_class: frequency
+      state_class: measurement
+      unit_of_measurement: "Hz"
+      value_template: >-
+        {{ value_json.frequency_hz if value_json is mapping and value_json.frequency_hz is number else none }}
+    - <<: *ils6300_load
+      name: "ILS6300 Beban Faktor daya"
+      unique_id: samoto_energy_ils6300_load_power_factor
+      default_entity_id: sensor.samoto_energy_ils6300_load_power_factor
+      device_class: power_factor
+      state_class: measurement
+      value_template: >-
+        {{ value_json.power_factor if value_json is mapping and value_json.power_factor is number else none }}
+    - <<: &ils6300_pv
+        state_topic: "samoto_energy/ils6300/pv"
+        expire_after: 20
+        availability_mode: all
+        availability:
+          - topic: "samoto_energy/ils6300/status"
+          - topic: "samoto_energy/ils6300/pv"
+            value_template: >-
+              {{ 'online' if value_json is mapping and value_json.ok is sameas true else 'offline' }}
+        device: *ils6300_meter_device
+      name: "ILS6300 PV Tegangan"
+      unique_id: samoto_energy_ils6300_pv_voltage
+      default_entity_id: sensor.samoto_energy_ils6300_pv_voltage
+      device_class: voltage
+      state_class: measurement
+      unit_of_measurement: "V"
+      value_template: >-
+        {{ value_json.voltage_v if value_json is mapping and value_json.voltage_v is number else none }}
+    - <<: *ils6300_pv
+      name: "ILS6300 PV Arus"
+      unique_id: samoto_energy_ils6300_pv_current
+      default_entity_id: sensor.samoto_energy_ils6300_pv_current
+      device_class: current
+      state_class: measurement
+      unit_of_measurement: "A"
+      value_template: >-
+        {{ value_json.current_a if value_json is mapping and value_json.current_a is number else none }}
+    - <<: *ils6300_pv
+      name: "ILS6300 PV Daya aktif"
+      unique_id: samoto_energy_ils6300_pv_power
+      default_entity_id: sensor.samoto_energy_ils6300_pv_power
+      device_class: power
+      state_class: measurement
+      unit_of_measurement: "W"
+      value_template: >-
+        {{ value_json.power_w if value_json is mapping and value_json.power_w is number else none }}
+    - <<: *ils6300_pv
+      name: "ILS6300 PV Energi total"
+      unique_id: samoto_energy_ils6300_pv_energy
+      default_entity_id: sensor.samoto_energy_ils6300_pv_energy
+      device_class: energy
+      state_class: total_increasing
+      unit_of_measurement: "kWh"
+      value_template: >-
+        {{ (value_json.energy_wh / 1000) | round(3) if value_json is mapping and value_json.energy_wh is number else none }}
+    - name: "ILS6300 Status Meter PV"
+      unique_id: samoto_energy_ils6300_pv_status
+      default_entity_id: sensor.samoto_energy_ils6300_pv_status
+      state_topic: "samoto_energy/ils6300/pv"
+      availability_topic: "samoto_energy/ils6300/status"
+      expire_after: 20
+      device: *ils6300_meter_device
+      entity_category: diagnostic
+      value_template: >-
+        {{ {'ok': 'Aktif', 'disabled': 'PV belum diaktifkan', 'shunt_unreadable': 'Register shunt tidak terbaca', 'shunt_mismatch': 'Setelan shunt bukan 100 A', 'invalid_read': 'Pembacaan gagal', 'above_design_voc': 'Tegangan melebihi Voc desain'}.get(value_json.reason | default(''), 'Status tidak dikenal') if value_json is mapping else 'Pesan tidak valid' }}
+    - <<: &ils6300_battery
+        state_topic: "shoto_bridge/ils6300/bank"
+        expire_after: 15
+        availability_mode: all
+        availability:
+          - topic: "shoto_bridge/ils6300/status"
+          - topic: "shoto_bridge/ils6300/bank"
+            value_template: >-
+              {{ 'online' if value_json is mapping and value_json.valid is sameas true and value_json.has_telem is sameas true and value_json.p is number else 'offline' }}
+      name: "ILS6300 Baterai Tegangan"
+      unique_id: samoto_energy_ils6300_battery_voltage
+      default_entity_id: sensor.samoto_energy_ils6300_battery_voltage
+      device_class: voltage
+      state_class: measurement
+      unit_of_measurement: "V"
+      value_template: >-
+        {{ value_json.v if value_json is mapping and value_json.v is number else none }}
+    - <<: *ils6300_battery
+      name: "ILS6300 Baterai Arus bertanda"
+      unique_id: samoto_energy_ils6300_battery_current
+      default_entity_id: sensor.samoto_energy_ils6300_battery_current
+      device_class: current
+      state_class: measurement
+      unit_of_measurement: "A"
+      value_template: >-
+        {{ value_json.i if value_json is mapping and value_json.i is number else none }}
+    - <<: *ils6300_battery
+      name: "ILS6300 Baterai SOC"
+      unique_id: samoto_energy_ils6300_battery_soc
+      default_entity_id: sensor.samoto_energy_ils6300_battery_soc
+      device_class: battery
+      state_class: measurement
+      unit_of_measurement: "%"
+      value_template: >-
+        {{ value_json.soc if value_json is mapping and value_json.soc is number else none }}
+    - <<: *ils6300_battery
+      name: "ILS6300 Baterai Daya bertanda"
+      unique_id: samoto_energy_ils6300_battery_power
+      default_entity_id: sensor.samoto_energy_ils6300_battery_power
+      device_class: power
+      state_class: measurement
+      unit_of_measurement: "W"
+      value_template: >-
+        {{ value_json.p if value_json is mapping and value_json.p is number else none }}
+    - <<: *ils6300_battery
+      name: "ILS6300 Baterai Daya charge"
+      unique_id: samoto_energy_ils6300_battery_charge_power
+      default_entity_id: sensor.samoto_energy_ils6300_battery_charge_power
+      device_class: power
+      state_class: measurement
+      unit_of_measurement: "W"
+      value_template: >-
+        {% set p = value_json.p if value_json is mapping and value_json.p is number else none %} {{ ([p, 0] | max) if p is not none else none }}
+    - <<: *ils6300_battery
+      name: "ILS6300 Baterai Daya discharge"
+      unique_id: samoto_energy_ils6300_battery_discharge_power
+      default_entity_id: sensor.samoto_energy_ils6300_battery_discharge_power
+      device_class: power
+      state_class: measurement
+      unit_of_measurement: "W"
+      value_template: >-
+        {% set p = value_json.p if value_json is mapping and value_json.p is number else none %} {{ ([-p, 0] | max) if p is not none else none }}
+    - <<: *ils6300_battery
+      name: "ILS6300 Baterai Arah daya"
+      unique_id: samoto_energy_ils6300_battery_mode
+      default_entity_id: sensor.samoto_energy_ils6300_battery_mode
+      value_template: >-
+        {% set p = value_json.p if value_json is mapping and value_json.p is number else none %} {{ ('Charging' if p > 0 else 'Discharging' if p < 0 else 'Idle') if p is not none else none }}
+
+utility_meter:
+  samoto_energy_ils6300_grid_daily:
+    unique_id: samoto_energy_ils6300_grid_daily
+    source: sensor.samoto_energy_ils6300_grid_energy
+    cycle: daily
+    periodically_resetting: false
+  samoto_energy_ils6300_grid_monthly:
+    unique_id: samoto_energy_ils6300_grid_monthly
+    source: sensor.samoto_energy_ils6300_grid_energy
+    cycle: monthly
+    periodically_resetting: false
+  samoto_energy_ils6300_grid_yearly:
+    unique_id: samoto_energy_ils6300_grid_yearly
+    source: sensor.samoto_energy_ils6300_grid_energy
+    cycle: yearly
+    periodically_resetting: false
+  samoto_energy_ils6300_load_daily:
+    unique_id: samoto_energy_ils6300_load_daily
+    source: sensor.samoto_energy_ils6300_load_energy
+    cycle: daily
+    periodically_resetting: false
+  samoto_energy_ils6300_load_monthly:
+    unique_id: samoto_energy_ils6300_load_monthly
+    source: sensor.samoto_energy_ils6300_load_energy
+    cycle: monthly
+    periodically_resetting: false
+  samoto_energy_ils6300_load_yearly:
+    unique_id: samoto_energy_ils6300_load_yearly
+    source: sensor.samoto_energy_ils6300_load_energy
+    cycle: yearly
+    periodically_resetting: false
+  samoto_energy_ils6300_pv_daily:
+    unique_id: samoto_energy_ils6300_pv_daily
+    source: sensor.samoto_energy_ils6300_pv_energy
+    cycle: daily
+    periodically_resetting: false
+  samoto_energy_ils6300_pv_monthly:
+    unique_id: samoto_energy_ils6300_pv_monthly
+    source: sensor.samoto_energy_ils6300_pv_energy
+    cycle: monthly
+    periodically_resetting: false
+  samoto_energy_ils6300_pv_yearly:
+    unique_id: samoto_energy_ils6300_pv_yearly
+    source: sensor.samoto_energy_ils6300_pv_energy
+    cycle: yearly
+    periodically_resetting: false

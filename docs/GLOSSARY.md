@@ -157,3 +157,21 @@
 | **`params`** | Serial Monitor ESP32 | Audit *read-only* parameter EEPROM BMS Shoto (`cmd 0x06..0x50` & `0x43`) tanpa mengubah isi BMS. |
 | **`help`** | Serial Monitor ESP32 | Menampilkan daftar semua perintah CLI ESP32 yang tersedia. |
 | **`serial_lab.py`** (`autodetect`, `probe`, `capture`, `decode`, `esp-log --csv`, `esp-log --params`) | Terminal PC ([`tools/serial_lab.py`](../tools/serial_lab.py)) | Utilitas PC untuk mendeteksi protokol Shoto, merekam log Serial ESP32 ke file `.log`, mengekspor data 15 sel ke `.csv`, dan menyimpan hasil audit `params`. |
+
+---
+
+## 8. Pengukuran energi IHF6200 dan ILS6300
+
+| Istilah | Arti dalam proyek |
+|---|---|
+| **PZEM-004T V3.0 100 A dan CT** | Meter AC satu fase. CT membaca arus pada satu konduktor fase. Tegangan acuan dan arus berasal dari sirkuit yang sama. Dua meter mengukur input PLN dan output inverter secara independen. |
+| **PZEM-017 dan shunt** | Meter DC RS485 berating 300 V. Shunt menghasilkan jatuh tegangan kecil yang proporsional dengan arus. Firmware memakai konfigurasi shunt 100 A dan memeriksanya lewat register holding `0x0003`. |
+| **PV, MPPT dan Voc** | PV adalah sumber panel surya. MPPT mengatur titik operasi panel. Voc adalah tegangan saat rangkaian terbuka. Voc maksimum desain, termasuk koreksi suhu terendah, dipakai untuk menentukan kelayakan meter. |
+| **Impor PLN** | Energi yang diukur pada cabang masuk inverter. Pengukuran total rumah memerlukan meter pada titik masuk utama. |
+| **Beban inverter** | Daya atau energi AC pada keluaran yang dipasangi meter. Energi beban dapat berasal dari PLN, PV, atau baterai. |
+| **Faktor daya (PF)** | Rasio daya aktif W terhadap daya semu VA pada sisi AC. PZEM-004T melaporkannya dalam rentang 0–1. |
+| **Charge/discharge bertanda** | Arus dan daya bank Shoto positif saat mengisi dan negatif saat melepas energi. Dashboard menampilkan besar daya masing-masing arah serta status Idle ketika daya nol. |
+| **Counter Wh dan Utility Meter** | Meter menyimpan pembacaan kumulatif Wh. Paket HA mengekspornya sebagai kWh dan memakai Utility Meter untuk rekap harian, bulanan, dan tahunan menurut zona waktu HA. |
+| **Unavailable** | Data terkini gagal dibaca, kedaluwarsa, atau sumber offline. Status ini berbeda dari pengukuran sah bernilai nol. |
+
+[Panduan monitor energi](guides/GUIDE-SAMOTO-ENERGY.md) · [Diagram wiring data](diagrams/samoto-energy-pzem.svg)

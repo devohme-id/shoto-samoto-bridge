@@ -1,0 +1,1 @@
+../../shoto_samoto_bridge/config.h
